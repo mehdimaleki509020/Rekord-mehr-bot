@@ -6,7 +6,23 @@ export default {
       env.BALE_TOKEN ||
       env.BALE_BOT_TOKEN ||
       env.BOT_TOKEN;
+    if (request.method === "GET" && url.pathname === "/debug") {
+      if (!token) {
+        return new Response("TOKEN NOT FOUND", { status: 500 });
+      }
 
+      const r = await fetch(
+        `https://tapi.bale.ai/bot${token}/getWebhookInfo`
+      );
+
+      const text = await r.text();
+
+      return new Response(text, {
+        headers: {
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+      });
+    }
     // تست سلامت ربات
     if (request.method === "GET" && url.pathname === "/") {
       return new Response("Rekord Mehr Bot is running ✅", {
