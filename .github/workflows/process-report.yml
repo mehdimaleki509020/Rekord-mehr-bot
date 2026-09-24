@@ -1,0 +1,128 @@
+name: Process Bale sales reports
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: rekord-mehr-report-processor
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WORKER_URL: ${{ vars.REKORD_WORKER_URL }}
+      OIDC_AUDIENCE: rekord-mehr-bot-processor
+
+    steps:
+      - name: Check processor configuration
+        id: config
+        shell: bash
+        run: |
+          if [ -z "${WORKER_URL}" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "REKORD_WORKER_URL is not configured yet; nothing to process."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Claim pending report
+        if: steps.config.outputs.ready == 'true'
+        id: claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}")
+          OIDC_TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$TOKEN_JSON")
+          echo "::add-mask::$OIDC_TOKEN"
+          RESPONSE=$(curl -fsS \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            "${WORKER_URL%/}/processor/pending")
+          JOB_ID=$(python -c 'import json,sys; x=json.load(sys.stdin); print((x.get("job") or {}).get("id", ""))' <<<"$RESPONSE")
+          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+          if [ -z "$JOB_ID" ]; then
+            echo "No pending report."
+          else
+            echo "Claimed report #$JOB_ID"
+          fi
+
+      - name: Check out processor
+        if: steps.claim.outputs.job_id != ''
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.claim.outputs.job_id != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install XLSB reader
+        if: steps.claim.outputs.job_id != ''
+        run: python -m pip install --disable-pip-version-check --no-cache-dir pyxlsb==1.0.10
+
+      - name: Download raw SalesReport
+        if: steps.claim.outputs.job_id != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}")
+          OIDC_TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$TOKEN_JSON")
+          echo "::add-mask::$OIDC_TOKEN"
+          curl -fsS \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            "${WORKER_URL%/}/processor/jobs/${{ steps.claim.outputs.job_id }}/file" \
+            -o SalesReport.xlsb
+          test -s SalesReport.xlsb
+
+      - name: Process report
+        if: steps.claim.outputs.job_id != ''
+        id: processor
+        shell: bash
+        run: |
+          set -euo pipefail
+          python processor.py SalesReport.xlsb --targets targets.json --output result.json
+          test -s result.json
+
+      - name: Save processed result
+        if: steps.claim.outputs.job_id != '' && success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}")
+          OIDC_TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$TOKEN_JSON")
+          echo "::add-mask::$OIDC_TOKEN"
+          curl -fsS \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @result.json \
+            "${WORKER_URL%/}/processor/jobs/${{ steps.claim.outputs.job_id }}/result"
+
+      - name: Report processing failure
+        if: steps.claim.outputs.job_id != '' && failure()
+        shell: bash
+        run: |
+          set +e
+          TOKEN_JSON=$(curl -fsS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}")
+          OIDC_TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$TOKEN_JSON")
+          echo "::add-mask::$OIDC_TOKEN"
+          printf '%s' '{"error":"GitHub processor failed. Please resend the raw SalesReport file."}' > error.json
+          curl -fsS \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @error.json \
+            "${WORKER_URL%/}/processor/jobs/${{ steps.claim.outputs.job_id }}/error" || true

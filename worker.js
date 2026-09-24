@@ -1,155 +1,66 @@
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
+import ROWS from "./targets.json";
 
-    const token =
-      env.BALE_TOKEN ||
-      env.BALE_BOT_TOKEN ||
-      env.BOT_TOKEN;
-    if (request.method === "GET" && url.pathname === "/debug") {
-      if (!token) {
-        return new Response("TOKEN NOT FOUND", { status: 500 });
-      }
+const TARGETS = ROWS.map(([store,name,baseline_m,target20_m,target30_m,target40_m]) => ({store,name,baseline_m,target20_m,target30_m,target40_m}));
+const REPO="mehdimaleki509020/Rekord-mehr-bot";
+const AUD="rekord-mehr-bot-processor";
+const ISS="https://token.actions.githubusercontent.com";
+const WREF=`${REPO}/.github/workflows/process-report.yml@refs/heads/main`;
+let ready=false, seeded=false, jwks={until:0,keys:[]};
 
-      const r = await fetch(
-        `https://tapi.bale.ai/bot${token}/getWebhookInfo`
-      );
+const norm=v=>String(v??"").normalize("NFKC").replace(/[يى]/g,"ی").replace(/ك/g,"ک").replace(/[ۀة]/g,"ه").replace(/[أإٱ]/g,"ا").replace(/ؤ/g,"و").replace(/[‌‎‏]/g," ").replace(/\s+/g," ").trim().toLowerCase();
+const key=v=>norm(v).replace(/[^0-9A-Za-z\u0600-\u06FF]/g,"");
+const token=e=>e.BALE_TOKEN||e.BALE_BOT_TOKEN||e.BOT_TOKEN||"";
+const J=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8"}});
+const fm=n=>Number(n||0).toLocaleString("fa-IR",{maximumFractionDigits:1});
+const fp=n=>Number.isFinite(n)?`${(n*100).toLocaleString("fa-IR",{maximumFractionDigits:1})}٪`:"—";
 
-      const text = await r.text();
+async function api(e,m,b){const t=token(e);if(!t)throw Error("BALE TOKEN NOT FOUND");const r=await fetch(`https://tapi.bale.ai/bot${t}/${m}`,b===undefined?{}:{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});const x=await r.json().catch(()=>({ok:false}));if(!r.ok||x.ok===false)throw Error(`Bale ${m}: ${x.description||r.status}`);return x}
+const send=(e,c,text)=>c?api(e,"sendMessage",{chat_id:c,text}):null;
 
-      return new Response(text, {
-        headers: {
-          "Content-Type": "application/json; charset=UTF-8",
-        },
-      });
-    }
-    // تست سلامت ربات
-    if (request.method === "GET" && url.pathname === "/") {
-      return new Response("Rekord Mehr Bot is running ✅", {
-        status: 200,
-      });
-    }
+async function init(e){
+ if(!e.DB)throw Error("D1 binding DB is missing");
+ if(!ready){await e.DB.batch([
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS sellers(seller_key TEXT PRIMARY KEY,store TEXT,store_key TEXT,seller_name TEXT,baseline_m REAL,target20_m REAL,target30_m REAL,target40_m REAL)"),
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS links(user_id TEXT PRIMARY KEY,seller_key TEXT,linked_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS sales(seller_key TEXT PRIMARY KEY,sales_m REAL DEFAULT 0,invoices INTEGER DEFAULT 0,rows_n INTEGER DEFAULT 0,report_id INTEGER,period_year INTEGER,period_month INTEGER,days_elapsed INTEGER,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY AUTOINCREMENT,file_id TEXT,file_name TEXT,file_size INTEGER,file_path TEXT,uploader_user_id TEXT,uploader_chat_id TEXT,status TEXT DEFAULT 'pending',created_at TEXT DEFAULT CURRENT_TIMESTAMP,started_at TEXT,processed_at TEXT,matched_sellers INTEGER,sales_m REAL,note TEXT)"),
+  e.DB.prepare("CREATE INDEX IF NOT EXISTS reports_status ON reports(status,id)"),
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS admins(user_id TEXT PRIMARY KEY,first_name TEXT,username TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+ ]);ready=true}
+ if(!seeded){const c=await e.DB.prepare("SELECT COUNT(*) c FROM sellers").first();if(Number(c?.c||0)<TARGETS.length){const q=e.DB.prepare("INSERT OR REPLACE INTO sellers(seller_key,store,store_key,seller_name,baseline_m,target20_m,target30_m,target40_m) VALUES(?,?,?,?,?,?,?,?)");const a=TARGETS.map(t=>q.bind(key(t.name),t.store,key(t.store),t.name,t.baseline_m,t.target20_m,t.target30_m,t.target40_m));for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40))}seeded=true}
+}
 
-    // تنظیم Webhook بله
-    if (request.method === "GET" && url.pathname === "/setup") {
-      if (!token) {
-        return new Response("BALE TOKEN NOT FOUND", { status: 500 });
-      }
+function reward(s,v){if(v>=s.target40_m)return [5,null];if(v>=s.target30_m)return [3,s.target40_m];if(v>=s.target20_m)return [1,s.target30_m];return [0,s.target20_m]}
+async function myStatus(e,s){const x=await e.DB.prepare("SELECT * FROM sales WHERE seller_key=?").bind(s.seller_key).first();const v=Number(x?.sales_m||0),g=s.baseline_m?v/s.baseline_m-1:NaN,[rw,nxt]=reward(s,v),days=Number(x?.days_elapsed||0),proj=days?v*30/days:0;let t=`📊 ${s.seller_name} | ${s.store}\nفروش فعلی: ${fm(v)} میلیون تومان\nمبنای شهریور: ${fm(s.baseline_m)} میلیون تومان\nرشد: ${fp(g)}\nپاداش فعلی: ${fm(rw)} میلیون تومان`;if(nxt)t+=`\nفاصله تا پله بعد: ${fm(Math.max(0,nxt-v))} میلیون تومان`;if(days)t+=`\nپیش‌بینی ۳۰روزه: ${fm(proj)} میلیون تومان\nدوره: ${x.period_year}/${x.period_month} تا روز ${days}`;else t+="\n⚠️ هنوز گزارش فروش جدید پردازش نشده است.";return t}
+async function board(e,store=""){let q="SELECT s.*,COALESCE(x.sales_m,0) sales_m FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key",p=[];if(store){q+=" WHERE s.store_key=?";p=[key(store)]}const r=(await e.DB.prepare(q).bind(...p).all()).results||[];if(!r.length)return "فروشگاهی پیدا نشد.";r.forEach(x=>x.g=x.baseline_m?x.sales_m/x.baseline_m-1:0);r.sort((a,b)=>b.g-a.g);return `${store?`🏆 رتبه‌بندی ${r[0].store}`:"🏆 رتبه‌بندی شبکه"}\n`+r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.g)} — ${fm(x.sales_m)}م`).join("\n")}
+async function branch(e,store){const k=key(store),r=(await e.DB.prepare("SELECT s.*,COALESCE(x.sales_m,0) sales_m FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key WHERE s.store_key=?").bind(k).all()).results||[];if(!r.length)return `فروشگاه «${store}» پیدا نشد.`;const sales=r.reduce((a,x)=>a+Number(x.sales_m||0),0),b=r.reduce((a,x)=>a+Number(x.baseline_m||0),0);return `🏬 وضعیت ${r[0].store}\nفروش: ${fm(sales)} میلیون تومان\nرشد نسبت به مبنا: ${fp(b?sales/b-1:0)}\nفروشندگان: ${r.length}\n\n`+await board(e,r[0].store)}
 
-      const webhookUrl = `${url.origin}/webhook`;
+async function link(e,userId,name){const k=key(name);let s=await e.DB.prepare("SELECT * FROM sellers WHERE seller_key=?").bind(k).first();if(!s){const all=(await e.DB.prepare("SELECT * FROM sellers").all()).results||[];const hits=all.filter(x=>x.seller_key.includes(k)||k.includes(x.seller_key));if(hits.length===1)s=hits[0]}if(!s)return null;await e.DB.prepare("INSERT OR REPLACE INTO links(user_id,seller_key) VALUES(?,?)").bind(String(userId),s.seller_key).run();return s}
+async function admin(e,u,claim=false){const ids=String(e.ADMIN_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);if(ids.includes(String(u.id)))return true;if(await e.DB.prepare("SELECT 1 x FROM admins WHERE user_id=?").bind(String(u.id)).first())return true;if(!claim)return false;const c=await e.DB.prepare("SELECT COUNT(*) c FROM admins").first();if(Number(c?.c||0))return false;await e.DB.prepare("INSERT INTO admins(user_id,first_name,username) VALUES(?,?,?)").bind(String(u.id),u.first_name||"",u.username||"").run();return true}
 
-      const response = await fetch(
-        `https://tapi.bale.ai/bot${token}/setWebhook`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url: webhookUrl,
-          }),
-        }
-      );
+async function queueFile(e,m){const c=m.chat?.id,u=m.from||{},d=m.document;if(String(m.chat?.type||"")!=="private")return send(e,c,"🔒 فایل SalesReport را فقط در چت خصوصی ربات ارسال کنید.");if(!(await admin(e,u,true)))return send(e,c,"⛔ فقط مدیر طرح می‌تواند فایل فروش را بارگذاری کند.");const name=d.file_name||"SalesReport.xlsb";if(!name.toLowerCase().endsWith(".xlsb"))return send(e,c,"فایل باید گزارش خام SalesReport با پسوند .xlsb باشد.");if(Number(d.file_size||0)>20*1024*1024)return send(e,c,"حجم فایل بیشتر از ۲۰ مگابایت است.");const f=await api(e,"getFile",{file_id:d.file_id}),path=f?.result?.file_path;if(!path)throw Error("Bale getFile returned no file_path");const z=await e.DB.prepare("INSERT INTO reports(file_id,file_name,file_size,file_path,uploader_user_id,uploader_chat_id,status) VALUES(?,?,?,?,?,?,'pending')").bind(String(d.file_id||""),name,Number(d.file_size||0),path,String(u.id||""),String(c||"")).run();return send(e,c,`✅ فایل «${name}» دریافت شد.\nپردازش خودکار آغاز می‌شود. کد گزارش: ${z.meta?.last_row_id||"—"}`)}
 
-      const result = await response.text();
+async function hook(req,e){const up=await req.json(),m=up.message;if(!m)return new Response("OK");const c=m.chat?.id,u=m.from||{},txt=String(m.text||m.caption||"").trim();if(m.document){await queueFile(e,m);return new Response("OK")}
+ if(txt==="/start"||txt==="شروع"){await send(e,c,"✅ ربات «رکورد غیربرقی مهر» فعال است.\n\nدستورها:\n• وضعیت من\n• وضعیت شعبه [نام شعبه]\n• رتبه‌بندی\n• ثبت نام [نام و نام خانوادگی]\n• آخرین گزارش\n\nمدیر می‌تواند فایل خام SalesReport.xlsb را در چت خصوصی ارسال کند.");return new Response("OK")}
+ if(txt==="وضعیت من"){let l=await e.DB.prepare("SELECT seller_key FROM links WHERE user_id=?").bind(String(u.id)).first();if(!l){const auto=await link(e,u.id,`${u.first_name||""} ${u.last_name||""}`);if(auto)l={seller_key:auto.seller_key}}if(!l)await send(e,c,"ابتدا ثبت کنید: ثبت نام [نام و نام خانوادگی]");else{const s=await e.DB.prepare("SELECT * FROM sellers WHERE seller_key=?").bind(l.seller_key).first();await send(e,c,await myStatus(e,s))}return new Response("OK")}
+ if(/^ثبت[ ‌-]?نام\s+/u.test(txt)){const s=await link(e,u.id,txt.replace(/^ثبت[ ‌-]?نام\s+/u,""));await send(e,c,s?`✅ ${s.seller_name} | ${s.store} ثبت شد.`:"نام دقیق پیدا نشد. نام و نام خانوادگی را مطابق لیست فروشندگان وارد کنید.");return new Response("OK")}
+ if(txt.startsWith("وضعیت شعبه")){const st=txt.slice("وضعیت شعبه".length).trim()||(await e.DB.prepare("SELECT s.store FROM links l JOIN sellers s ON s.seller_key=l.seller_key WHERE l.user_id=?").bind(String(u.id)).first())?.store||"";await send(e,c,st?await branch(e,st):"نام شعبه را وارد کنید.");return new Response("OK")}
+ if(txt==="رتبه‌بندی"||txt==="رتبه بندی"){await send(e,c,await board(e));return new Response("OK")}
+ if(txt==="آخرین گزارش"){const r=await e.DB.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 1").first();await send(e,c,r?`آخرین گزارش #${r.id}\n${r.file_name}\nوضعیت: ${r.status}\nفروشندگان تطبیق‌شده: ${r.matched_sellers??"—"}\nفروش: ${r.sales_m!=null?fm(r.sales_m)+" میلیون تومان":"—"}`:"هنوز گزارشی ثبت نشده است.");return new Response("OK")}
+ return new Response("OK")
+}
 
-      return new Response(result, {
-        headers: {
-          "Content-Type": "application/json; charset=UTF-8",
-        },
-      });
-    }
+const b64=s=>{s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+const dec=s=>JSON.parse(new TextDecoder().decode(b64(s)));
+async function keys(){if(jwks.until>Date.now())return jwks.keys;const r=await fetch(`${ISS}/.well-known/jwks`);if(!r.ok)throw Error("OIDC JWKS unavailable");const x=await r.json();jwks={keys:x.keys||[],until:Date.now()+21600000};return jwks.keys}
+async function auth(req){const h=req.headers.get("authorization")||"";if(!h.startsWith("Bearer "))return null;const p=h.slice(7).split(".");if(p.length!==3)return null;let hd,x;try{hd=dec(p[0]);x=dec(p[1])}catch{return null}const now=Math.floor(Date.now()/1000),aud=Array.isArray(x.aud)?x.aud:[x.aud];if(x.iss!==ISS||!aud.includes(AUD)||x.repository!==REPO||x.ref!=="refs/heads/main"||x.workflow_ref!==WREF||!x.exp||x.exp<now)return null;const j=(await keys()).find(k=>k.kid===hd.kid);if(!j)return null;try{const k=await crypto.subtle.importKey("jwk",j,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);return await crypto.subtle.verify({name:"RSASSA-PKCS1-v1_5"},k,b64(p[2]),new TextEncoder().encode(`${p[0]}.${p[1]}`))?x:null}catch{return null}}
 
-    // دریافت پیام از بله
-    if (request.method === "POST" && url.pathname === "/webhook") {
-      try {
-        const update = await request.json();
+async function proc(req,e,url){if(!(await auth(req)))return J({ok:false,error:"unauthorized"},401);
+ if(req.method==="GET"&&url.pathname==="/processor/pending"){await e.DB.prepare("UPDATE reports SET status='pending',started_at=NULL WHERE status='processing' AND started_at < datetime('now','-30 minutes')").run();const r=await e.DB.prepare("SELECT id,file_name,file_size,created_at FROM reports WHERE status='pending' ORDER BY id LIMIT 1").first();if(!r)return J({ok:true,job:null});await e.DB.prepare("UPDATE reports SET status='processing',started_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(r.id).run();return J({ok:true,job:r})}
+ let m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/file$/);if(req.method==="GET"&&m){const r=await e.DB.prepare("SELECT * FROM reports WHERE id=?").bind(Number(m[1])).first();if(!r?.file_path)return J({error:"not_found"},404);const z=await fetch(`https://tapi.bale.ai/file/bot${token(e)}/${r.file_path}`);if(!z.ok)return J({error:`bale_${z.status}`},502);return new Response(z.body,{headers:{"content-type":"application/octet-stream"}})}
+ m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/result$/);if(req.method==="POST"&&m){const id=Number(m[1]),r=await e.DB.prepare("SELECT * FROM reports WHERE id=?").bind(id).first();if(!r)return J({error:"not_found"},404);const b=await req.json(),tot=Array.isArray(b.totals)?b.totals:[];const q=e.DB.prepare("INSERT OR REPLACE INTO sales(seller_key,sales_m,invoices,rows_n,report_id,period_year,period_month,days_elapsed,updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)");const a=[];for(const x of tot){const k=key(x.seller_name||"");if(k)a.push(q.bind(k,Number(x.sales_m||0),Number(x.invoice_count||0),Number(x.row_count||0),id,Number(b.period_year||0),Number(b.period_month||0),Number(b.days_elapsed||0)))}for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40));await e.DB.prepare("UPDATE reports SET status='done',processed_at=CURRENT_TIMESTAMP,matched_sellers=?,sales_m=?,note=?,file_path=NULL WHERE id=?").bind(Number(b.matched_sellers||0),Number(b.sales_m||0),String(b.note||"").slice(0,3000),id).run();await send(e,r.uploader_chat_id,`✅ گزارش فروش پردازش شد.\nفروشندگان تطبیق‌شده: ${Number(b.matched_sellers||0)} از ۹۲\nفروش افراد طرح: ${fm(b.sales_m)} میلیون تومان\nدوره: ${b.period_year}/${b.period_month} تا روز ${b.days_elapsed}`);return J({ok:true,saved:a.length})}
+ m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/error$/);if(req.method==="POST"&&m){const b=await req.json().catch(()=>({})),id=Number(m[1]);await e.DB.prepare("UPDATE reports SET status='error',processed_at=CURRENT_TIMESTAMP,note=? WHERE id=?").bind(String(b.error||"processor error").slice(0,1000),id).run();return J({ok:true})}
+ return J({error:"not_found"},404)
+}
 
-        const msg = update.message;
-        if (!msg) {
-          return new Response("OK");
-        }
-
-        const chatId = msg.chat?.id;
-        const userId = msg.from?.id;
-        const firstName = msg.from?.first_name || "";
-        const username = msg.from?.username || "";
-        const text = (msg.text || "").trim();
-
-        // ذخیره پیام‌ها در D1
-        if (env.DB) {
-          await env.DB.prepare(`
-            CREATE TABLE IF NOT EXISTS bale_messages (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              user_id TEXT,
-              chat_id TEXT,
-              first_name TEXT,
-              username TEXT,
-              message_text TEXT,
-              created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-          `).run();
-
-          await env.DB.prepare(`
-            INSERT INTO bale_messages
-            (user_id, chat_id, first_name, username, message_text)
-            VALUES (?, ?, ?, ?, ?)
-          `)
-            .bind(
-              String(userId || ""),
-              String(chatId || ""),
-              firstName,
-              username,
-              text
-            )
-            .run();
-        }
-
-        if (!chatId) {
-          return new Response("OK");
-        }
-
-        let reply = "";
-
-        if (
-          text === "/start" ||
-          text === "شروع" ||
-          text === "شروع رکورد مهر"
-        ) {
-          reply =
-            "✅ ربات «رکورد غیربرقی مهر» فعال است.\n\n" +
-            "پیام شما دریافت شد.";
-        } else if (text === "وضعیت من") {
-          reply =
-            "✅ ارتباط شما با ربات برقرار است.\n" +
-            "اطلاعات عملکرد و تارگت در مرحله بعد به این بخش متصل می‌شود.";
-        } else {
-          // فعلاً برای پیام‌های عادی پاسخ اضافه نمی‌فرستیم
-          return new Response("OK");
-        }
-
-        await fetch(
-          `https://tapi.bale.ai/bot${token}/sendMessage`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: reply,
-            }),
-          }
-        );
-
-        return new Response("OK");
-      } catch (error) {
-        return new Response("ERROR: " + error.message, {
-          status: 500,
-        });
-      }
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
-};
+export default {async fetch(req,e){const u=new URL(req.url);try{await init(e);if(u.pathname.startsWith("/processor/"))return proc(req,e,u);if(req.method==="GET"&&u.pathname==="/"){const r=await e.DB.prepare("SELECT id,status,processed_at FROM reports ORDER BY id DESC LIMIT 1").first();return J({ok:true,service:"Rekord Mehr Bot",targets:92,last_report:r||null})}if(req.method==="GET"&&u.pathname==="/setup"){const w=`${u.origin}/webhook`,x=await api(e,"setWebhook",{url:w});return J({ok:true,webhook_url:w,bale:x})}if(req.method==="GET"&&u.pathname==="/debug"){const x=await api(e,"getWebhookInfo");const c=await e.DB.prepare("SELECT (SELECT COUNT(*) FROM sellers) sellers,(SELECT COUNT(*) FROM links) links,(SELECT COUNT(*) FROM reports) reports").first();return J({ok:true,webhook:x.result||x,counts:c})}if(req.method==="POST"&&u.pathname==="/webhook")return hook(req,e);return new Response("Not Found",{status:404})}catch(err){console.log(err?.stack||String(err));return J({ok:false,error:String(err?.message||err)},500)}}};
