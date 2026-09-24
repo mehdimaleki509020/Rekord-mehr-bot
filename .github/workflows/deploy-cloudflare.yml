@@ -22,3 +22,8 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
           command: deploy
+
+      - name: Configure Bale webhook
+        run: |
+          sleep 3
+          curl --fail-with-body --retry 3 --retry-delay 2 "https://rekord-mehr-bot.mehdimaleki509020.workers.dev/setup"
