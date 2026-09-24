@@ -1,0 +1,23 @@
+{
+  "name": "rekord-mehr-bot",
+  "version": "2.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "preflight": "npm test",
+    "test": "node --test test/*.test.mjs",
+    "check:build": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "wrangler": "^4.38.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}
