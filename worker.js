@@ -25,7 +25,8 @@ async function init(e){
   e.DB.prepare("CREATE TABLE IF NOT EXISTS sales(seller_key TEXT PRIMARY KEY,sales_m REAL DEFAULT 0,invoices INTEGER DEFAULT 0,rows_n INTEGER DEFAULT 0,report_id INTEGER,period_year INTEGER,period_month INTEGER,days_elapsed INTEGER,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
   e.DB.prepare("CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY AUTOINCREMENT,file_id TEXT,file_name TEXT,file_size INTEGER,file_path TEXT,uploader_user_id TEXT,uploader_chat_id TEXT,status TEXT DEFAULT 'pending',created_at TEXT DEFAULT CURRENT_TIMESTAMP,started_at TEXT,processed_at TEXT,matched_sellers INTEGER,sales_m REAL,note TEXT)"),
   e.DB.prepare("CREATE INDEX IF NOT EXISTS reports_status ON reports(status,id)"),
-  e.DB.prepare("CREATE TABLE IF NOT EXISTS admins(user_id TEXT PRIMARY KEY,first_name TEXT,username TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),\n  e.DB.prepare("CREATE TABLE IF NOT EXISTS supervisors(user_id TEXT PRIMARY KEY,store TEXT,store_key TEXT,display_name TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS admins(user_id TEXT PRIMARY KEY,first_name TEXT,username TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
+  e.DB.prepare("CREATE TABLE IF NOT EXISTS supervisors(user_id TEXT PRIMARY KEY,store TEXT,store_key TEXT,display_name TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
  ]);await e.DB.prepare("DELETE FROM sales WHERE period_year=1405 AND period_month=6").run();ready=true}
  if(!seeded){const c=await e.DB.prepare("SELECT COUNT(*) c FROM sellers").first();if(Number(c?.c||0)<TARGETS.length){const q=e.DB.prepare("INSERT OR REPLACE INTO sellers(seller_key,store,store_key,seller_name,baseline_m,target20_m,target30_m,target40_m) VALUES(?,?,?,?,?,?,?,?)");const a=TARGETS.map(t=>q.bind(key(t.name),t.store,key(t.store),t.name,t.baseline_m,t.target20_m,t.target30_m,t.target40_m));for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40))}seeded=true}
 }
