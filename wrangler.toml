@@ -1,0 +1,28 @@
+name = "rekord-mehr-bot"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+CAMPAIGN_YEAR = "1405"
+CAMPAIGN_MONTH = "7"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rekord-mehr-db"
+database_id = "f646ef14-b5c5-4c00-9e91-2fe0ceb85de0"
+
+[[queues.producers]]
+binding = "IMPORT_QUEUE"
+queue = "rekord-mehr-imports"
+
+[[queues.consumers]]
+queue = "rekord-mehr-imports"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 3
+max_concurrency = 1
+
+[observability.logs]
+enabled = false

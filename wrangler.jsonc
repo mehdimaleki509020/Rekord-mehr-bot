@@ -1,6 +1,0 @@
-{
-  "name": "rekord-mehr-bot",
-  "main": "worker.js",
-  "compatibility_date": "2026-09-22",
-  "workers_dev": true
-}

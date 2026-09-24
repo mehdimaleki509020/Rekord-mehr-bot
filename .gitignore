@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars*
+.env*
+private/
+src/targets.js
+targets.json
+dist/
