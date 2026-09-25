@@ -28,26 +28,32 @@ async function init(e){
   e.DB.prepare("CREATE TABLE IF NOT EXISTS admins(user_id TEXT PRIMARY KEY,first_name TEXT,username TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
   e.DB.prepare("CREATE TABLE IF NOT EXISTS supervisors(user_id TEXT PRIMARY KEY,store TEXT,store_key TEXT,display_name TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
  ]);await e.DB.prepare("DELETE FROM sales WHERE period_year=1405 AND period_month=6").run();ready=true}
- if(!seeded){const c=await e.DB.prepare("SELECT COUNT(*) c FROM sellers").first();if(Number(c?.c||0)<TARGETS.length){const q=e.DB.prepare("INSERT OR REPLACE INTO sellers(seller_key,store,store_key,seller_name,baseline_m,target20_m,target30_m,target40_m) VALUES(?,?,?,?,?,?,?,?)");const a=TARGETS.map(t=>q.bind(key(t.name),t.store,key(t.store),t.name,t.baseline_m,t.target20_m,t.target30_m,t.target40_m));for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40))}seeded=true}
+ if(!seeded){const q=e.DB.prepare("INSERT OR REPLACE INTO sellers(seller_key,store,store_key,seller_name,baseline_m,target20_m,target30_m,target40_m) VALUES(?,?,?,?,?,?,?,?)");const a=TARGETS.map(t=>q.bind(key(t.name),t.store,key(t.store),t.name,t.baseline_m,t.target20_m,t.target30_m,t.target40_m));for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40));seeded=true}
 }
 
 function reward(s,v){if(v>=s.target40_m)return [5,null];if(v>=s.target30_m)return [3,s.target40_m];if(v>=s.target20_m)return [1,s.target30_m];return [0,s.target20_m]}
-async function myStatus(e,s){const x=await e.DB.prepare("SELECT * FROM sales WHERE seller_key=?").bind(s.seller_key).first();const v=Number(x?.sales_m||0),g=s.baseline_m?v/s.baseline_m-1:NaN,[rw,nxt]=reward(s,v),days=Number(x?.days_elapsed||0),proj=days?v*30/days:0;let t=`📊 ${s.seller_name} | ${s.store}\nفروش مهر تا امروز: ${fm(v)} میلیون تومان\nمبنای شهریور: ${fm(s.baseline_m)} میلیون تومان\nرشد مهر نسبت به شهریور: ${fp(g)}\nپاداش فعلی: ${fm(rw)} میلیون تومان`;if(nxt)t+=`\nفاصله تا پله بعد: ${fm(Math.max(0,nxt-v))} میلیون تومان`;if(days)t+=`\nپیش‌بینی ۳۰روزه: ${fm(proj)} میلیون تومان\nدوره: ${x.period_year}/${x.period_month} تا روز ${days}`;else t+="\n⚠️ هنوز گزارش فروش جدید پردازش نشده است.";return t}
+async function myStatus(e,s){const x=await e.DB.prepare("SELECT * FROM sales WHERE seller_key=?").bind(s.seller_key).first();const v=Number(x?.sales_m||0),g=s.baseline_m?v/s.baseline_m-1:NaN,[rw,nxt]=reward(s,v),days=Number(x?.days_elapsed||0),proj=days?v*30/days:0;let t=`📊 ${s.seller_name} | ${s.store}\nفروش مهر تا امروز: ${fm(v)} میلیون تومان\nمبنای شهریور: ${fm(s.baseline_m)} میلیون تومان\nرشد مهر نسبت به شهریور: ${fp(g)}\n\n🎯 تارگت‌های شخصی\nسطح ۱: ${fm(s.target20_m)} → پاداش ۱ میلیون\nسطح ۲: ${fm(s.target30_m)} → پاداش ۳ میلیون\nسطح ۳: ${fm(s.target40_m)} → پاداش ۵ میلیون\n\nپاداش فعلی: ${fm(rw)} میلیون تومان`;if(nxt)t+=`\nفاصله تا پله بعد: ${fm(Math.max(0,nxt-v))} میلیون تومان`;else t+="\n✅ بالاترین سطح پاداش محقق شده است.";if(days)t+=`\nپیش‌بینی ۳۰روزه: ${fm(proj)} میلیون تومان\nدوره: ${x.period_year}/${x.period_month} تا روز ${days}`;else t+="\n⚠️ هنوز گزارش فروش جدید پردازش نشده است.";return t}
 async function board(e,store=""){let q="SELECT s.*,COALESCE(x.sales_m,0) sales_m FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key",p=[];if(store){q+=" WHERE s.store_key=?";p=[key(store)]}const r=(await e.DB.prepare(q).bind(...p).all()).results||[];if(!r.length)return "فروشگاهی پیدا نشد.";r.forEach(x=>x.g=x.baseline_m?x.sales_m/x.baseline_m-1:0);r.sort((a,b)=>b.g-a.g);return `${store?`🏆 رتبه‌بندی مهر ${r[0].store}`:"🏆 رتبه‌بندی مهر شبکه"}\n`+r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.g)} — ${fm(x.sales_m)}م`).join("\n")}
+function supervisorReward(t1,t2,t3,v){if(v>=t3)return [15,null];if(v>=t2)return [10,t3];if(v>=t1)return [5,t2];return [0,t1]}
 async function branch(e,store){
- const k=key(store),r=(await e.DB.prepare("SELECT s.*,COALESCE(x.sales_m,0) sales_m FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key WHERE s.store_key=?").bind(k).all()).results||[];
+ const k=key(store),r=(await e.DB.prepare("SELECT s.*,COALESCE(x.sales_m,0) sales_m,COALESCE(x.days_elapsed,0) days_elapsed FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key WHERE s.store_key=?").bind(k).all()).results||[];
  if(!r.length)return `فروشگاه «${store}» پیدا نشد.`;
- const sales=r.reduce((a,x)=>a+Number(x.sales_m||0),0),b=r.reduce((a,x)=>a+Number(x.baseline_m||0),0);
- let n20=0,n30=0,n40=0,near=0;
+ const sales=r.reduce((a,x)=>a+Number(x.sales_m||0),0),b=r.reduce((a,x)=>a+Number(x.baseline_m||0),0),t1=r.reduce((a,x)=>a+Number(x.target20_m||0),0),t2=r.reduce((a,x)=>a+Number(x.target30_m||0),0),t3=r.reduce((a,x)=>a+Number(x.target40_m||0),0),days=Math.max(0,...r.map(x=>Number(x.days_elapsed||0))),proj=days?sales*30/days:0;
+ const [sr,nxt]=supervisorReward(t1,t2,t3,sales);
+ let n1=0,n2=0,n3=0,near=0;
  for(const x of r){
   const v=Number(x.sales_m||0);
-  if(v>=Number(x.target40_m||0))n40++;
-  else if(v>=Number(x.target30_m||0))n30++;
-  else if(v>=Number(x.target20_m||0))n20++;
-  const nxt=v<Number(x.target20_m||0)?Number(x.target20_m||0):v<Number(x.target30_m||0)?Number(x.target30_m||0):v<Number(x.target40_m||0)?Number(x.target40_m||0):0;
-  if(nxt>0&&nxt-v<=Math.max(30,nxt*0.05))near++;
+  if(v>=Number(x.target40_m||0))n3++;
+  else if(v>=Number(x.target30_m||0))n2++;
+  else if(v>=Number(x.target20_m||0))n1++;
+  const nx=v<Number(x.target20_m||0)?Number(x.target20_m||0):v<Number(x.target30_m||0)?Number(x.target30_m||0):v<Number(x.target40_m||0)?Number(x.target40_m||0):0;
+  if(nx>0&&nx-v<=Math.max(30,nx*0.05))near++;
  }
- return `🏬 وضعیت مهر ${r[0].store}\nفروش مهر: ${fm(sales)} میلیون تومان\nرشد مهر نسبت به شهریور: ${fp(b?sales/b-1:0)}\nفروشندگان: ${r.length}\nپله ۲۰٪: ${n20} نفر\nپله ۳۰٪: ${n30} نفر\nپله ۴۰٪: ${n40} نفر\nنزدیک پله بعدی: ${near} نفر\n\n`+await board(e,r[0].store)
+ let msg=`🏬 وضعیت مهر ${r[0].store}\nفروش مهر شعبه: ${fm(sales)} میلیون تومان\nمبنای شهریور شعبه: ${fm(b)} میلیون تومان\nرشد نسبت به شهریور: ${fp(b?sales/b-1:0)}\n\n🎯 پاداش سوپروایزر\n۵ میلیون: فروش ${fm(t1)} میلیون\n۱۰ میلیون: فروش ${fm(t2)} میلیون\n۱۵ میلیون: فروش ${fm(t3)} میلیون\nپاداش فعلی: ${fm(sr)} میلیون تومان`;
+ if(nxt)msg+=`\nفاصله تا پاداش بعدی: ${fm(Math.max(0,nxt-sales))} میلیون تومان`;else msg+="\n✅ پاداش ۱۵ میلیونی محقق شده است.";
+ if(days)msg+=`\nپیش‌بینی ۳۰روزه شعبه: ${fm(proj)} میلیون تومان`;
+ msg+=`\n\nوضعیت تیم (${r.length} فروشنده)\nسطح ۱: ${n1} نفر | سطح ۲: ${n2} نفر | سطح ۳: ${n3} نفر\nنزدیک پله بعدی: ${near} نفر\n\n`;
+ return msg+await board(e,r[0].store)
 }
 
 async function supervisorOf(e,userId){return await e.DB.prepare("SELECT * FROM supervisors WHERE user_id=?").bind(String(userId)).first()}
@@ -72,7 +78,7 @@ async function hook(req,e){const up=await req.json(),m=up.message;if(!m)return n
  if(txt==="/start"||txt==="شروع"){
   let msg="✅ ربات «رکورد غیربرقی مهر» فعال است.";
   if(isAdmin)msg+="\n\nنقش شما: مدیر طرح\n• وضعیت شعبه [نام شعبه]\n• رتبه‌بندی\n• آخرین گزارش\n• ثبت سرپرست [نام شعبه] (با Reply روی پیام سرپرست)\n• ارسال SalesReport.xlsb در چت خصوصی";
-  else if(sup)msg+=`\n\nنقش شما: سرپرست ${sup.store}\n• وضعیت شعبه\n• تیم من`;
+  else if(sup)msg+=`\n\nنقش شما: سرپرست ${sup.store}\n• وضعیت شعبه (تارگت و پاداش ۵/۱۰/۱۵ میلیونی)\n• تیم من`;
   else msg+="\n\nفروشنده:\n• ثبت نام [نام و نام خانوادگی]\n• وضعیت من";
   await send(e,c,msg);return new Response("OK")
  }
@@ -124,4 +130,4 @@ async function proc(req,e,url){if(!(await auth(req)))return J({ok:false,error:"u
  return J({error:"not_found"},404)
 }
 
-export default {async fetch(req,e){const u=new URL(req.url);try{await init(e);if(u.pathname.startsWith("/processor/"))return proc(req,e,u);if(req.method==="GET"&&u.pathname==="/"){const r=await e.DB.prepare("SELECT id,status,processed_at FROM reports ORDER BY id DESC LIMIT 1").first();return J({ok:true,service:"Rekord Mehr Bot",targets:92,last_report:r||null})}if(req.method==="GET"&&u.pathname==="/setup"){const w=`${u.origin}/webhook`,x=await api(e,"setWebhook",{url:w});return J({ok:true,webhook_url:w,bale:x})}if(req.method==="GET"&&u.pathname==="/debug"){const x=await api(e,"getWebhookInfo");const c=await e.DB.prepare("SELECT (SELECT COUNT(*) FROM sellers) sellers,(SELECT COUNT(*) FROM links) links,(SELECT COUNT(*) FROM reports) reports").first();return J({ok:true,webhook:x.result||x,counts:c})}if(req.method==="POST"&&u.pathname==="/webhook")return hook(req,e);return new Response("Not Found",{status:404})}catch(err){console.log(err?.stack||String(err));return J({ok:false,error:String(err?.message||err)},500)}}};
+export default {async fetch(req,e){const u=new URL(req.url);try{await init(e);if(u.pathname.startsWith("/processor/"))return proc(req,e,u);if(req.method==="GET"&&u.pathname==="/"){const r=await e.DB.prepare("SELECT id,status,processed_at FROM reports ORDER BY id DESC LIMIT 1").first();return J({ok:true,service:"Rekord Mehr Bot",targets:92,seller_rewards_m:[1,3,5],supervisor_rewards_m:[5,10,15],last_report:r||null})}if(req.method==="GET"&&u.pathname==="/setup"){const w=`${u.origin}/webhook`,x=await api(e,"setWebhook",{url:w});return J({ok:true,webhook_url:w,bale:x})}if(req.method==="GET"&&u.pathname==="/debug"){const x=await api(e,"getWebhookInfo");const c=await e.DB.prepare("SELECT (SELECT COUNT(*) FROM sellers) sellers,(SELECT COUNT(*) FROM links) links,(SELECT COUNT(*) FROM reports) reports").first();return J({ok:true,webhook:x.result||x,counts:c})}if(req.method==="POST"&&u.pathname==="/webhook")return hook(req,e);return new Response("Not Found",{status:404})}catch(err){console.log(err?.stack||String(err));return J({ok:false,error:String(err?.message||err)},500)}}};
