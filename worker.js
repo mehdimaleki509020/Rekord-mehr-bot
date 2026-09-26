@@ -12,6 +12,7 @@ const key=v=>norm(v).replace(/[^0-9A-Za-z\u0600-\u06FF]/g,"");
 const token=e=>e.BALE_TOKEN||e.BALE_BOT_TOKEN||e.BOT_TOKEN||"";
 const J=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8"}});
 const fm=n=>Number(n||0).toLocaleString("fa-IR",{maximumFractionDigits:1});
+const fa=n=>{const v=Number(n||0);if(Math.abs(v)>=1000)return `${(v/1000).toLocaleString("fa-IR",{minimumFractionDigits:0,maximumFractionDigits:2})} میلیارد تومان`;return `${v.toLocaleString("fa-IR",{minimumFractionDigits:0,maximumFractionDigits:1})} میلیون تومان`};
 const fp=n=>Number.isFinite(n)?`${(n*100).toLocaleString("fa-IR",{maximumFractionDigits:1})}٪`:"—";
 
 async function api(e,m,b){const t=token(e);if(!t)throw Error("BALE TOKEN NOT FOUND");const r=await fetch(`https://tapi.bale.ai/bot${t}/${m}`,b===undefined?{}:{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});const x=await r.json().catch(()=>({ok:false}));if(!r.ok||x.ok===false)throw Error(`Bale ${m}: ${x.description||r.status}`);return x}
@@ -35,11 +36,11 @@ function reward(s,v){if(v>=s.target40_m)return [5,null];if(v>=s.target30_m)retur
 async function myStatus(e,s){
  const x=await e.DB.prepare("SELECT * FROM sales WHERE seller_key=?").bind(s.seller_key).first();
  const v=Number(x?.sales_m||0),c=Number(x?.comparison_m||0),g=c?v/c-1:NaN,[rw,nxt]=reward(s,v),days=Number(x?.days_elapsed||0),proj=days?v*30/days:0;
- let t=`📊 ${s.seller_name} | ${s.store}\nفروش مهر تا روز ${days||"—"}: ${fm(v)} میلیون تومان`;
- if(days)t+=`\nفروش ۱ تا ${days} شهریور: ${fm(c)} میلیون تومان\nرشد نسبت به دوره مشابه شهریور: ${fp(g)}`;
- t+=`\n\n🎯 تارگت‌های شخصی\nسطح ۱: ${fm(s.target20_m)} → پاداش ۱ میلیون\nسطح ۲: ${fm(s.target30_m)} → پاداش ۳ میلیون\nسطح ۳: ${fm(s.target40_m)} → پاداش ۵ میلیون\n\nپاداش فعلی: ${fm(rw)} میلیون تومان`;
- if(nxt)t+=`\nفاصله تا پله بعد: ${fm(Math.max(0,nxt-v))} میلیون تومان`;else t+="\n✅ بالاترین سطح پاداش محقق شده است.";
- if(days)t+=`\nپیش‌بینی ۳۰روزه: ${fm(proj)} میلیون تومان\nدوره: ۱ تا ${days} مهر در برابر ۱ تا ${days} شهریور`;else t+="\n⚠️ هنوز گزارش فروش جدید پردازش نشده است.";
+ let t=`📊 ${s.seller_name} | ${s.store}\nفروش مهر تا روز ${days||"—"}: ${fa(v)}`;
+ if(days)t+=`\nفروش ۱ تا ${days} شهریور: ${fa(c)}\nرشد نسبت به دوره مشابه شهریور: ${fp(g)}`;
+ t+=`\n\n🎯 تارگت‌های شخصی\nسطح ۱: ${fa(s.target20_m)} → پاداش ۱ میلیون\nسطح ۲: ${fa(s.target30_m)} → پاداش ۳ میلیون\nسطح ۳: ${fa(s.target40_m)} → پاداش ۵ میلیون\n\nپاداش فعلی: ${fm(rw)} میلیون تومان`;
+ if(nxt)t+=`\nفاصله تا پله بعد: ${fa(Math.max(0,nxt-v))}`;else t+="\n✅ بالاترین سطح پاداش محقق شده است.";
+ if(days)t+=`\nپیش‌بینی ۳۰روزه: ${fa(proj)}\nدوره: ۱ تا ${days} مهر در برابر ۱ تا ${days} شهریور`;else t+="\n⚠️ هنوز گزارش فروش جدید پردازش نشده است.";
  return t
 }
 async function board(e,store=""){
@@ -49,7 +50,7 @@ async function board(e,store=""){
  if(!r.length)return "فروشگاهی پیدا نشد.";
  r.forEach(x=>{const c=Number(x.comparison_m||0);x.g=c?Number(x.sales_m||0)/c-1:NaN});
  r.sort((a,b)=>{const ag=Number.isFinite(a.g)?a.g:-Infinity,bg=Number.isFinite(b.g)?b.g:-Infinity;return bg-ag});
- return `${store?`🏆 رتبه‌بندی رشد دوره مشابه ${r[0].store}`:"🏆 رتبه‌بندی رشد دوره مشابه شبکه"}\n`+r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.g)} — ${fm(x.sales_m)}م`).join("\n")
+ return `${store?`🏆 رتبه‌بندی رشد دوره مشابه ${r[0].store}`:"🏆 رتبه‌بندی رشد دوره مشابه شبکه"}\n`+r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.g)} — ${fa(x.sales_m)}`).join("\n")
 }
 function supervisorReward(t1,t2,t3,v){if(v>=t3)return [15,null];if(v>=t2)return [10,t3];if(v>=t1)return [5,t2];return [0,t1]}
 async function branch(e,store){
@@ -67,11 +68,11 @@ async function branch(e,store){
   const nx=v<Number(x.target20_m||0)?Number(x.target20_m||0):v<Number(x.target30_m||0)?Number(x.target30_m||0):v<Number(x.target40_m||0)?Number(x.target40_m||0):0;
   if(nx>0&&nx-v<=Math.max(30,nx*0.05))near++;
  }
- let msg=`🏬 وضعیت مهر ${r[0].store}\nفروش مهر تا روز ${days||"—"}: ${fm(sales)} میلیون تومان`;
- if(days)msg+=`\nفروش ۱ تا ${days} شهریور: ${fm(comp)} میلیون تومان\nرشد شعبه نسبت به دوره مشابه: ${fp(comp?sales/comp-1:NaN)}`;
- msg+=`\n\n🎯 پاداش سوپروایزر\n۵ میلیون: فروش ${fm(t1)} میلیون\n۱۰ میلیون: فروش ${fm(t2)} میلیون\n۱۵ میلیون: فروش ${fm(t3)} میلیون\nپاداش فعلی: ${fm(sr)} میلیون تومان`;
- if(nxt)msg+=`\nفاصله تا پاداش بعدی: ${fm(Math.max(0,nxt-sales))} میلیون تومان`;else msg+="\n✅ پاداش ۱۵ میلیونی محقق شده است.";
- if(days)msg+=`\nپیش‌بینی ۳۰روزه شعبه: ${fm(proj)} میلیون تومان`;
+ let msg=`🏬 وضعیت مهر ${r[0].store}\nفروش مهر تا روز ${days||"—"}: ${fa(sales)}`;
+ if(days)msg+=`\nفروش ۱ تا ${days} شهریور: ${fa(comp)}\nرشد شعبه نسبت به دوره مشابه: ${fp(comp?sales/comp-1:NaN)}`;
+ msg+=`\n\n🎯 پاداش سوپروایزر\n۵ میلیون: فروش ${fa(t1)}\n۱۰ میلیون: فروش ${fa(t2)}\n۱۵ میلیون: فروش ${fa(t3)}\nپاداش فعلی: ${fm(sr)} میلیون تومان`;
+ if(nxt)msg+=`\nفاصله تا پاداش بعدی: ${fa(Math.max(0,nxt-sales))}`;else msg+="\n✅ پاداش ۱۵ میلیونی محقق شده است.";
+ if(days)msg+=`\nپیش‌بینی ۳۰روزه شعبه: ${fa(proj)}`;
  msg+=`\n\nوضعیت تیم (${r.length} فروشنده)\nزیر سطح ۱: ${n0} | سطح ۱: ${n1} | سطح ۲: ${n2} | سطح ۳: ${n3}\nنزدیک پله بعدی: ${near} نفر\n\n🏅 رتبه فروشندگان شعبه\n`;
  const ranked=[...r].sort((a,b)=>Number(b.sales_m||0)-Number(a.sales_m||0));
  msg+=ranked.map((x,i)=>{
@@ -80,8 +81,8 @@ async function branch(e,store){
   if(v>=Number(x.target40_m||0)){level="سطح ۳";nx=0}
   else if(v>=Number(x.target30_m||0)){level="سطح ۲";nx=Number(x.target40_m||0)}
   else if(v>=Number(x.target20_m||0)){level="سطح ۱";nx=Number(x.target30_m||0)}
-  const gap=nx>0?` | ${fm(Math.max(0,nx-v))}م تا بعدی`:"";
-  return `${i+1}) ${x.seller_name} — ${fm(v)}م | ${fp(g)} | ${level}${gap}`
+  const gap=nx>0?` | ${fa(Math.max(0,nx-v))} تا بعدی`:"";
+  return `${i+1}) ${x.seller_name} — ${fa(v)} | ${fp(g)} | ${level}${gap}`
  }).join("\n");
  return msg
 }
@@ -154,7 +155,7 @@ async function auth(req){const h=req.headers.get("authorization")||"";if(!h.star
 async function proc(req,e,url){if(!(await auth(req)))return J({ok:false,error:"unauthorized"},401);
  if(req.method==="GET"&&url.pathname==="/processor/pending"){await e.DB.prepare("UPDATE reports SET status='pending',started_at=NULL WHERE status='processing' AND started_at < datetime('now','-30 minutes')").run();const r=await e.DB.prepare("SELECT id,file_name,file_size,created_at FROM reports WHERE status='pending' ORDER BY id LIMIT 1").first();if(!r)return J({ok:true,job:null});await e.DB.prepare("UPDATE reports SET status='processing',started_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(r.id).run();return J({ok:true,job:r})}
  let m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/file$/);if(req.method==="GET"&&m){const r=await e.DB.prepare("SELECT * FROM reports WHERE id=?").bind(Number(m[1])).first();if(!r?.file_path)return J({error:"not_found"},404);const z=await fetch(`https://tapi.bale.ai/file/bot${token(e)}/${r.file_path}`);if(!z.ok)return J({error:`bale_${z.status}`},502);return new Response(z.body,{headers:{"content-type":"application/octet-stream"}})}
- m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/result$/);if(req.method==="POST"&&m){const id=Number(m[1]),r=await e.DB.prepare("SELECT * FROM reports WHERE id=?").bind(id).first();if(!r)return J({error:"not_found"},404);const b=await req.json(),py=Number(b.period_year||0),pm=Number(b.period_month||0),tot=Array.isArray(b.totals)?b.totals:[];if(py!==1405||pm!==7){await e.DB.prepare("UPDATE reports SET status='reference',processed_at=CURRENT_TIMESTAMP,matched_sellers=?,sales_m=?,note=?,file_path=NULL WHERE id=?").bind(Number(b.matched_sellers||0),Number(b.sales_m||0),`دوره ${py}/${pm} مرجع است و در فروش مهر لحاظ نشد.`,id).run();await send(e,r.uploader_chat_id,`ℹ️ گزارش ${py}/${pm} پردازش شد، اما چون مربوط به مهر ۱۴۰۵ نیست در فروش جاری و پاداش‌ها لحاظ نشد.\nاین فایل فقط به‌عنوان مرجع نگه‌داری شد.\nفروشندگان تطبیق‌شده: ${Number(b.matched_sellers||0)} از ۹۲`);return J({ok:true,saved:0,reference:true,period_year:py,period_month:pm})}const q=e.DB.prepare("INSERT OR REPLACE INTO sales(seller_key,sales_m,comparison_m,invoices,rows_n,report_id,period_year,period_month,days_elapsed,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)");const a=[];for(const x of tot){const k=key(x.seller_name||"");if(k)a.push(q.bind(k,Number(x.sales_m||0),Number(x.comparison_m||0),Number(x.invoice_count||0),Number(x.row_count||0),id,py,pm,Number(b.days_elapsed||0)))}for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40));await e.DB.prepare("UPDATE reports SET status='done',processed_at=CURRENT_TIMESTAMP,matched_sellers=?,sales_m=?,note=?,file_path=NULL WHERE id=?").bind(Number(b.matched_sellers||0),Number(b.sales_m||0),String(b.note||"").slice(0,3000),id).run();await send(e,r.uploader_chat_id,`✅ گزارش فروش مهر پردازش شد.\nفروشندگان تطبیق‌شده: ${Number(b.matched_sellers||0)} از ۹۲\nفروش مهر افراد طرح: ${fm(b.sales_m)} میلیون تومان\nفروش دوره مشابه شهریور: ${fm(b.comparison_sales_m)} میلیون تومان\nدوره: ${py}/${pm} تا روز ${b.days_elapsed}`);return J({ok:true,saved:a.length})}
+ m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/result$/);if(req.method==="POST"&&m){const id=Number(m[1]),r=await e.DB.prepare("SELECT * FROM reports WHERE id=?").bind(id).first();if(!r)return J({error:"not_found"},404);const b=await req.json(),py=Number(b.period_year||0),pm=Number(b.period_month||0),tot=Array.isArray(b.totals)?b.totals:[];if(py!==1405||pm!==7){await e.DB.prepare("UPDATE reports SET status='reference',processed_at=CURRENT_TIMESTAMP,matched_sellers=?,sales_m=?,note=?,file_path=NULL WHERE id=?").bind(Number(b.matched_sellers||0),Number(b.sales_m||0),`دوره ${py}/${pm} مرجع است و در فروش مهر لحاظ نشد.`,id).run();await send(e,r.uploader_chat_id,`ℹ️ گزارش ${py}/${pm} پردازش شد، اما چون مربوط به مهر ۱۴۰۵ نیست در فروش جاری و پاداش‌ها لحاظ نشد.\nاین فایل فقط به‌عنوان مرجع نگه‌داری شد.\nفروشندگان تطبیق‌شده: ${Number(b.matched_sellers||0)} از ۹۲`);return J({ok:true,saved:0,reference:true,period_year:py,period_month:pm})}const q=e.DB.prepare("INSERT OR REPLACE INTO sales(seller_key,sales_m,comparison_m,invoices,rows_n,report_id,period_year,period_month,days_elapsed,updated_at) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)");const a=[];for(const x of tot){const k=key(x.seller_name||"");if(k)a.push(q.bind(k,Number(x.sales_m||0),Number(x.comparison_m||0),Number(x.invoice_count||0),Number(x.row_count||0),id,py,pm,Number(b.days_elapsed||0)))}for(let i=0;i<a.length;i+=40)await e.DB.batch(a.slice(i,i+40));await e.DB.prepare("UPDATE reports SET status='done',processed_at=CURRENT_TIMESTAMP,matched_sellers=?,sales_m=?,note=?,file_path=NULL WHERE id=?").bind(Number(b.matched_sellers||0),Number(b.sales_m||0),String(b.note||"").slice(0,3000),id).run();await send(e,r.uploader_chat_id,`✅ گزارش فروش مهر پردازش شد.\nفروشندگان تطبیق‌شده: ${Number(b.matched_sellers||0)} از ۹۲\nفروش مهر افراد طرح: ${fa(b.sales_m)}\nفروش دوره مشابه شهریور: ${fa(b.comparison_sales_m)}\nدوره: ${py}/${pm} تا روز ${b.days_elapsed}`);return J({ok:true,saved:a.length})}
  m=url.pathname.match(/^\/processor\/jobs\/(\d+)\/error$/);if(req.method==="POST"&&m){const b=await req.json().catch(()=>({})),id=Number(m[1]);await e.DB.prepare("UPDATE reports SET status='error',processed_at=CURRENT_TIMESTAMP,note=? WHERE id=?").bind(String(b.error||"processor error").slice(0,1000),id).run();return J({ok:true})}
  return J({error:"not_found"},404)
 }
