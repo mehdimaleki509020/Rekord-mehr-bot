@@ -48,10 +48,49 @@ async function board(e,store=""){
  if(store){q+=" WHERE s.store_key=?";p=[key(store)]}
  const r=(await e.DB.prepare(q).bind(...p).all()).results||[];
  if(!r.length)return "فروشگاهی پیدا نشد.";
- r.forEach(x=>{const c=Number(x.comparison_m||0);x.g=c?Number(x.sales_m||0)/c-1:NaN});
- r.sort((a,b)=>{const ag=Number.isFinite(a.g)?a.g:-Infinity,bg=Number.isFinite(b.g)?b.g:-Infinity;return bg-ag});
- return `${store?`🏆 رتبه‌بندی رشد دوره مشابه ${r[0].store}`:"🏆 رتبه‌بندی رشد دوره مشابه شبکه"}\n`+r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.g)} — ${fa(x.sales_m)}`).join("\n")
+ r.forEach(x=>{const t=Number(x.target20_m||0),v=Number(x.sales_m||0),c=Number(x.comparison_m||0);x.att=t?v/t:0;x.g=c?v/c-1:NaN});
+ r.sort((a,b)=>b.att-a.att||Number(b.sales_m||0)-Number(a.sales_m||0));
+ return `${store?`🏆 رتبه‌بندی تحقق تارگت ${r[0].store}`:"🏆 رتبه‌بندی رکورد مهر شبکه"}\n`+
+   r.slice(0,10).map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.att)} تحقق سطح ۱ — ${fa(x.sales_m)}`).join("\n")
 }
+
+async function networkReport(e){
+ const r=(await e.DB.prepare("SELECT s.*,COALESCE(x.sales_m,0) sales_m,COALESCE(x.comparison_m,0) comparison_m,COALESCE(x.days_elapsed,0) days_elapsed FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key").all()).results||[];
+ if(!r.length)return "اطلاعات شبکه در دسترس نیست.";
+ const days=Math.max(0,...r.map(x=>Number(x.days_elapsed||0)));
+ const sales=r.reduce((a,x)=>a+Number(x.sales_m||0),0);
+ const comp=r.reduce((a,x)=>a+Number(x.comparison_m||0),0);
+ const t1=r.reduce((a,x)=>a+Number(x.target20_m||0),0);
+ const growth=comp?sales/comp-1:NaN;
+ const attainment=t1?sales/t1:0;
+
+ const byStore=new Map();
+ let lvl1=0,lvl2=0,lvl3=0,below=0,near=0;
+ for(const x of r){
+  const v=Number(x.sales_m||0),a=Number(x.target20_m||0),b=Number(x.target30_m||0),c=Number(x.target40_m||0);
+  if(v>=c)lvl3++; else if(v>=b)lvl2++; else if(v>=a)lvl1++; else below++;
+  const nx=v<a?a:v<b?b:v<c?c:0;
+  if(nx>0&&nx-v<=Math.max(30,nx*0.05))near++;
+  if(!byStore.has(x.store))byStore.set(x.store,{store:x.store,sales:0,comp:0,t1:0,sellers:0,ontrack:0});
+  const z=byStore.get(x.store); z.sales+=v; z.comp+=Number(x.comparison_m||0); z.t1+=a; z.sellers++;
+  if(v>=a)z.ontrack++;
+ }
+ const stores=[...byStore.values()].map(z=>({...z,att:z.t1?z.sales/z.t1:0,g:z.comp?z.sales/z.comp-1:NaN}))
+   .sort((a,b)=>b.att-a.att||b.sales-a.sales);
+
+ const topSellers=[...r].map(x=>({...x,att:Number(x.target20_m||0)?Number(x.sales_m||0)/Number(x.target20_m||0):0}))
+   .sort((a,b)=>b.att-a.att||Number(b.sales_m||0)-Number(a.sales_m||0)).slice(0,5);
+
+ let msg=`📊 گزارش شبکه غیربرقی | تا روز ${days||"—"} مهر\nفروش شبکه: ${fa(sales)}`;
+ if(days)msg+=`\nفروش ۱ تا ${days} شهریور: ${fa(comp)}\nرشد دوره مشابه: ${fp(growth)}`;
+ msg+=`\nتحقق تارگت سطح ۱ شبکه: ${fp(attainment)}\n\n🏬 رتبه شعب بر اساس تحقق تارگت سطح ۱\n`;
+ msg+=stores.map((z,i)=>`${i+1}) ${z.store} — ${fp(z.att)} | ${fa(z.sales)} | رشد ${fp(z.g)} | ${z.ontrack}/${z.sellers} نفر روی سطح ۱+`).join("\n");
+ msg+=`\n\n👥 وضعیت تیم شبکه\nزیر سطح ۱: ${below} | سطح ۱: ${lvl1} | سطح ۲: ${lvl2} | سطح ۳: ${lvl3}\nنزدیک پله بعدی: ${near} نفر`;
+ msg+=`\n\n🏅 ۵ فروشنده برتر بر اساس تحقق سطح ۱\n`+
+   topSellers.map((x,i)=>`${i+1}) ${x.seller_name} — ${fp(x.att)} | ${fa(x.sales_m)}`).join("\n");
+ return msg
+}
+
 function supervisorReward(t1,t2,t3,v){if(v>=t3)return [15,null];if(v>=t2)return [10,t3];if(v>=t1)return [5,t2];return [0,t1]}
 async function branch(e,store){
  const k=key(store),r=(await e.DB.prepare("SELECT s.*,COALESCE(x.sales_m,0) sales_m,COALESCE(x.comparison_m,0) comparison_m,COALESCE(x.days_elapsed,0) days_elapsed FROM sellers s LEFT JOIN sales x ON x.seller_key=s.seller_key WHERE s.store_key=?").bind(k).all()).results||[];
@@ -107,7 +146,7 @@ async function hook(req,e){const up=await req.json(),m=up.message;if(!m)return n
  const isAdmin=await admin(e,u,false),sup=await supervisorOf(e,u.id);
  if(txt==="/start"||txt==="شروع"){
   let msg="✅ ربات «رکورد غیربرقی مهر» فعال است.";
-  if(isAdmin)msg+="\n\nنقش شما: مدیر طرح\n• وضعیت شعبه [نام شعبه]\n• رتبه‌بندی\n• آخرین گزارش\n• ثبت سرپرست [نام شعبه] (با Reply روی پیام سرپرست)\n• ارسال SalesReport.xlsb در چت خصوصی";
+  if(isAdmin)msg+="\n\nنقش شما: مدیر طرح\n• وضعیت شعبه [نام شعبه]\n• رتبه‌بندی\n• گزارش شبکه\n• آخرین گزارش\n• ثبت سرپرست [نام شعبه] (با Reply روی پیام سرپرست)\n• ارسال SalesReport.xlsb در چت خصوصی";
   else if(sup)msg+=`\n\nنقش شما: سرپرست ${sup.store}\n• وضعیت شعبه (تارگت و پاداش ۵/۱۰/۱۵ میلیونی)\n• تیم من`;
   else msg+="\n\nفروشنده:\n• ثبت نام [نام و نام خانوادگی]\n• وضعیت من";
   await send(e,c,msg);return new Response("OK")
@@ -140,9 +179,13 @@ async function hook(req,e){const up=await req.json(),m=up.message;if(!m)return n
   if(!isAdmin){await send(e,c,sup?await board(e,sup.store):"⛔ رتبه‌بندی کامل فقط برای سرپرست و مدیر طرح است.");return new Response("OK")}
   await send(e,c,await board(e));return new Response("OK")
  }
+ if(txt==="گزارش شبکه"){
+  if(!isAdmin){await send(e,c,"⛔ این دستور مخصوص مدیر طرح است.");return new Response("OK")}
+  await send(e,c,await networkReport(e));return new Response("OK")
+ }
  if(txt==="آخرین گزارش"){
   if(!isAdmin){await send(e,c,"⛔ این دستور مخصوص مدیر طرح است.");return new Response("OK")}
-  const r=await e.DB.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 1").first();await send(e,c,r?`آخرین گزارش #${r.id}\n${r.file_name}\nوضعیت: ${r.status}\nفروشندگان تطبیق‌شده: ${r.matched_sellers??"—"}\nفروش: ${r.sales_m!=null?fm(r.sales_m)+" میلیون تومان":"—"}`:"هنوز گزارشی ثبت نشده است.");return new Response("OK")
+  const r=await e.DB.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 1").first();await send(e,c,r?`آخرین گزارش #${r.id}\n${r.file_name}\nوضعیت: ${r.status}\nفروشندگان تطبیق‌شده: ${r.matched_sellers??"—"}\nفروش: ${r.sales_m!=null?fa(r.sales_m):"—"}`:"هنوز گزارشی ثبت نشده است.");return new Response("OK")
  }
  return new Response("OK")
 }
