@@ -163,12 +163,14 @@ def process(input_path: Path, targets_path: Path):
 
     records=[]
     unmatched_all=defaultdict(float)
+    period_days=defaultdict(set)
     latest=(0,0)
     for v in iter_data_rows(input_path,header_row):
         if normalize_text(safe_get(v,ic))!=normalize_text(CATEGORY): continue
         y,m,d=as_int(safe_get(v,iy)),as_int(safe_get(v,im)),as_int(safe_get(v,iday))
         if y<=0 or not (1<=m<=12): continue
         if (y,m)>latest: latest=(y,m)
+        if d>0: period_days[(y,m)].add(d)
         amount_m=as_float(safe_get(v,iamount))/RIAL_PER_MILLION_TOMAN
         target,_,method=match_target(by_store,safe_get(v,istore),safe_get(v,iseller))
         if target:
@@ -181,7 +183,7 @@ def process(input_path: Path, targets_path: Path):
 
     if latest==(0,0): raise RuntimeError("No non-electric rows with a valid year/month were found")
     period_year,period_month=latest
-    days_elapsed=max((d for y,m,d,*_ in records if (y,m)==latest), default=0)
+    days_elapsed=max(period_days.get(latest,set()), default=0)
     comp_year,comp_month=period_year,period_month-1
     if comp_month==0: comp_year,comp_month=period_year-1,12
 
