@@ -109,6 +109,23 @@ export function branchMessage(branch, people) {
   return lines.join("\n");
 }
 
+export function networkMessage(branches) {
+  if (!branches.length) return "⏳ هنوز گزارشی برای شبکه بارگذاری نشده است.";
+  const sorted = [...branches].sort((a, b) =>
+    Number(b.aban_m || 0) - Number(a.aban_m || 0) ||
+    String(a.store).localeCompare(String(b.store), "fa"));
+  const total = sorted.reduce((sum, store) => sum + Number(store.aban_m || 0), 0);
+  const day = Math.max(0, ...sorted.map((store) => Number(store.days_elapsed || 0)));
+  const date = day ? " تا " + day.toLocaleString("fa-IR") + " آبان" : " تا آخرین گزارش";
+  return [
+    "📊 شبکه غیربرقی | فروش" + date,
+    "کل فروش: " + money(total),
+    "",
+    ...sorted.map((store, index) =>
+      (index + 1).toLocaleString("fa-IR") + ") " + store.store + ": " + money(store.aban_m)),
+  ].join("\n");
+}
+
 async function hasData(env) {
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM aban_stores").first();
   return Number(row?.n || 0) > 0;
@@ -140,6 +157,25 @@ async function branchStatus(env, store) {
   if (!branch) return "⏳ اطلاعات فروشگاه «" + store + "» در گزارش آبان یافت نشد.";
   const people = (await env.DB.prepare("SELECT * FROM aban_people WHERE store_key=?").bind(storeKey).all()).results || [];
   return branchMessage(branch, people);
+}
+
+async function networkStatus(env) {
+  const branches = (await env.DB.prepare(
+    "SELECT store,aban_m,days_elapsed FROM aban_stores ORDER BY aban_m DESC,store ASC"
+  ).all()).results || [];
+  return networkMessage(branches);
+}
+
+async function resolveBranchName(env, text) {
+  const names = (await env.DB.prepare("SELECT store,store_key FROM aban_stores").all()).results || [];
+  const wanted = key(text);
+  const exact = names.find((row) => row.store_key === wanted);
+  if (exact) return { store: exact.store };
+  if (!wanted || wanted.length < 2) return null;
+  const matches = names.filter((row) => row.store_key.includes(wanted));
+  if (matches.length === 1) return { store: matches[0].store };
+  if (matches.length > 1) return { ambiguous: matches.map((row) => row.store) };
+  return null;
 }
 
 async function supervisorOf(env, userId) {
@@ -233,9 +269,11 @@ async function hook(request, env) {
   if (text === "/start" || text === "شروع" || text === "وضعیت من") {
     if (sup) await send(env, chat, await branchStatus(env, sup.store));
     else if (isAdmin) await send(env, chat, [
-      "مدیریت لیگ آبان 🏆", "وضعیت شعبه [نام فروشگاه]",
-      "ثبت سرپرست [نام فروشگاه] (Reply به پیام او)",
-      "آخرین گزارش", "ارسال روزانه SalesReport.xlsb در گفت‌وگوی خصوصی",
+      "🏆 لیگ آبان | مدیر طرح",
+      "• برای فروش کل و رتبه شعب: شبکه",
+      "• برای جزئیات یک شعبه: فقط نام فروشگاه را بنویسید",
+      "• آخرین گزارش",
+      "• ارسال روزانه SalesReport.xlsb در گفت‌وگوی خصوصی",
     ].join("\n"));
     else await send(env, chat, await status(env, user.id));
     return new Response("OK");
@@ -263,12 +301,22 @@ async function hook(request, env) {
     else await send(env, chat, "⛔ این دستور مخصوص سوپروایزر و مدیر است.");
     return new Response("OK");
   }
+  if (text === "شبکه" && isAdmin) {
+    await send(env, chat, await networkStatus(env));
+    return new Response("OK");
+  }
   if (text === "آخرین گزارش" && isAdmin) {
     const last = await env.DB.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 1").first();
     await send(env, chat, last ? "گزارش #" + last.id + "\n" + last.file_name +
       "\nوضعیت: " + last.status + "\nتعداد فروشندگان: " + (last.matched_sellers ?? "—") :
       "هنوز گزارشی بارگذاری نشده است.");
     return new Response("OK");
+  }
+  if (isAdmin && message.chat?.type === "private") {
+    const matched = await resolveBranchName(env, text);
+    if (matched?.store) await send(env, chat, await branchStatus(env, matched.store));
+    else if (matched?.ambiguous) await send(env, chat,
+      "نام فروشگاه مبهم است. یکی از این نام‌ها را کامل بنویسید:\n" + matched.ambiguous.join("\n"));
   }
   return new Response("OK");
 }

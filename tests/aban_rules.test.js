@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage, insertMany } from "../worker_aban.js";
+import { sellerMessage, branchMessage, networkMessage, insertMany } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -63,4 +63,18 @@ test("D1 inserts never exceed 100 bound parameters per SQL statement", () => {
   assert.equal(statements.length, 15);
   assert.ok(sizes.every((n) => n <= 100), "D1 bound parameter limit exceeded");
   assert.equal(sizes.reduce((a, b) => a + b, 0), 170 * 8);
+});
+
+test("manager network screen shows total and branches by descending actual sales", () => {
+  const message = networkMessage([
+    { store: "چالوس", aban_m: 200, days_elapsed: 4 },
+    { store: "کرمانشاه", aban_m: 900, days_elapsed: 4 },
+    { store: "ارومیه", aban_m: 700, days_elapsed: 4 },
+  ]);
+  assert.match(message, /کل فروش: ۱٫۸ میلیارد تومان/);
+  const first = message.indexOf("کرمانشاه:");
+  const second = message.indexOf("ارومیه:");
+  const third = message.indexOf("چالوس:");
+  assert.ok(0 < first && first < second && second < third);
+  assert.doesNotMatch(message, /تارگت|جایزه|فروشنده/);
 });
