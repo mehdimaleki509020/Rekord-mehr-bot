@@ -60,7 +60,19 @@ async function init(env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS reports_status ON reports(status,id)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS admins(user_id TEXT PRIMARY KEY,first_name TEXT,username TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS supervisors(user_id TEXT PRIMARY KEY,store TEXT,store_key TEXT,display_name TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_migrations(id TEXT PRIMARY KEY,applied_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
   ]);
+  // One-time recovery for report 22, which was processed successfully by
+  // GitHub Actions but failed on the old D1 parameter limit. Do not repeat
+  // this recovery after another error; the migration marker is permanent.
+  const recoveryId = "retry-report-22-after-d1-bind-fix";
+  const migrated = await env.DB.prepare("SELECT id FROM bot_migrations WHERE id=?").bind(recoveryId).first();
+  if (!migrated) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE reports SET status='pending',started_at=NULL,processed_at=NULL,note='Retry after D1 parameter fix' WHERE id=22 AND status='error' AND file_path IS NOT NULL"),
+      env.DB.prepare("INSERT OR IGNORE INTO bot_migrations(id) VALUES(?)").bind(recoveryId),
+    ]);
+  }
   initialized = true;
 }
 
@@ -303,10 +315,12 @@ function finiteAmount(value) {
   if (!Number.isFinite(amount) || Math.abs(amount) > 1e10) throw Error("Invalid sales amount");
   return amount;
 }
-function insertMany(env, table, columns, records) {
+export function insertMany(env, table, columns, records) {
   const statements = [];
-  for (let pos = 0; pos < records.length; pos += 35) {
-    const group = records.slice(pos, pos + 35);
+  // Cloudflare D1 allows at most 100 bound parameters in each SQL statement.
+  const chunkSize = Math.max(1, Math.floor(100 / columns.length));
+  for (let pos = 0; pos < records.length; pos += chunkSize) {
+    const group = records.slice(pos, pos + chunkSize);
     const placeholders = "(" + columns.map(() => "?").join(",") + ")";
     const sql = "INSERT INTO " + table + "(" + columns.join(",") + ") VALUES " +
       group.map(() => placeholders).join(",");

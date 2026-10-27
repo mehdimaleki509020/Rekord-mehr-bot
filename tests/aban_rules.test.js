@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage } from "../worker_aban.js";
+import { sellerMessage, branchMessage, insertMany } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -43,4 +43,24 @@ test("supervisor screen includes individual target, sales, award and no-decline 
   assert.match(text, /سوپروایزر: ۰ میلیون تومان/);
   assert.match(text, /علی رضایی:/);
   assert.match(text, /۶ میلیون تومان/);
+});
+
+test("D1 inserts never exceed 100 bound parameters per SQL statement", () => {
+  const sizes = [];
+  const fakeDb = {
+    DB: {
+      prepare(sql) {
+        assert.match(sql, /^INSERT INTO aban_people/);
+        return {
+          bind(...values) { sizes.push(values.length); return { sql }; },
+        };
+      },
+    },
+  };
+  const columns = ["seller_key", "store_key", "store", "seller_name", "mehr_m", "aban_m", "days_elapsed", "report_id"];
+  const rows = Array.from({ length: 170 }, (_, i) => [String(i), "a", "A", "Seller", 100, 200, 4, 22]);
+  const statements = insertMany(fakeDb, "aban_people", columns, rows);
+  assert.equal(statements.length, 15);
+  assert.ok(sizes.every((n) => n <= 100), "D1 bound parameter limit exceeded");
+  assert.equal(sizes.reduce((a, b) => a + b, 0), 170 * 8);
 });

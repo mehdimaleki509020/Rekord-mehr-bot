@@ -104,7 +104,7 @@ jobs:
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}")
           OIDC_TOKEN=$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$TOKEN_JSON")
           echo "::add-mask::$OIDC_TOKEN"
-          curl -fsS \
+          curl --fail-with-body -sS \
             -H "Authorization: Bearer $OIDC_TOKEN" \
             -H "Content-Type: application/json" \
             --data-binary @result.json \
