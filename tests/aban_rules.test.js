@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage, networkMessage, insertMany } from "../worker_aban.js";
+import { sellerMessage, branchMessage, networkMessage, insertMany, withSavedMehrBaseline } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -77,4 +77,35 @@ test("manager network screen shows total and branches by descending actual sales
   const third = message.indexOf("چالوس:");
   assert.ok(0 < first && first < second && second < third);
   assert.doesNotMatch(message, /تارگت|جایزه|فروشنده/);
+});
+
+test("Aban-only exports reuse saved Mehr targets without losing old users and branches", () => {
+  const baselinePeople = [
+    { store: "کرمانشاه", store_key: "کرمانشاه", seller_name: "علی رضایی", seller_key: "کرمانشاه:علیرضایی", mehr_m: 700, aban_m: 200 },
+    { store: "کرمانشاه", store_key: "کرمانشاه", seller_name: "مینا حسینی", seller_key: "کرمانشاه:میناحسینی", mehr_m: 400, aban_m: 120 },
+  ];
+  const baselineStores = [
+    { store: "کرمانشاه", store_key: "کرمانشاه", mehr_m: 2000, aban_m: 350 },
+    { store: "ساری", store_key: "ساری", mehr_m: 800, aban_m: 100 },
+  ];
+  const today = {
+    mehr_rows: 0, aban_rows: 3, days_elapsed: 9, sales_m: 1100,
+    stores: [{ store: "کرمانشاه", store_key: "کرمانشاه", mehr_m: 0, aban_m: 1100 }],
+    sellers: [
+      { store: "کرمانشاه", store_key: "کرمانشاه", seller_name: "علی رضایی", seller_key: "کرمانشاه:علیرضایی", mehr_m: 0, aban_m: 700 },
+      { store: "کرمانشاه", store_key: "کرمانشاه", seller_name: "فروشنده جدید", seller_key: "کرمانشاه:فروشندهجدید", mehr_m: 0, aban_m: 300 },
+    ],
+  };
+  const result = withSavedMehrBaseline(today, baselinePeople, baselineStores);
+  assert.equal(result.stores.find((s) => s.store_key === "کرمانشاه").mehr_m, 2000);
+  assert.equal(result.stores.find((s) => s.store_key === "ساری").aban_m, 0);
+  assert.equal(result.sellers.find((p) => p.seller_name === "علی رضایی").mehr_m, 700);
+  assert.equal(result.sellers.find((p) => p.seller_name === "مینا حسینی").aban_m, 0);
+  assert.equal(result.sellers.find((p) => p.seller_name === "فروشنده جدید").mehr_m, 0);
+  assert.equal(result.seller_count, 3);
+  assert.equal(result.store_count, 2);
+});
+
+test("Aban-only cannot be installed without a stored Mehr baseline", () => {
+  assert.throws(() => withSavedMehrBaseline({ mehr_rows: 0 }, [], []), /مبنای مهر/);
 });

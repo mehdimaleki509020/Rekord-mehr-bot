@@ -119,8 +119,9 @@ def aggregate(rows: Iterable[dict]) -> dict:
         if month == ABAN_MONTH:
             sellers[identity]["seller_name"] = seller
 
-    if not mehr_rows:
-        raise ValueError("گزارش باید شامل تمام فروش غیربرقی مهر ۱۴۰۵ باشد؛ اطلاعات مهر یافت نشد.")
+    # Mehr is a closed month. When only the cumulative Aban report is exported,
+    # the Worker restores the Mehr baseline from its last successful snapshot.
+    # A first-ever import still needs a full Mehr+Aban file.
     if not aban_rows:
         raise ValueError("اطلاعات فروش آبان ۱۴۰۵ در فایل یافت نشد.")
     sorted_sellers = sorted(sellers.values(), key=lambda s: (s["store_key"], s["seller_key"]))

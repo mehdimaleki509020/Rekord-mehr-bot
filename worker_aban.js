@@ -73,6 +73,16 @@ async function init(env) {
       env.DB.prepare("INSERT OR IGNORE INTO bot_migrations(id) VALUES(?)").bind(recoveryId),
     ]);
   }
+  // An Aban-only export failed under the old rule. Requeue just the newest
+  // failed report once, preserving older successful snapshots and reports.
+  const abanRetry = "retry-latest-aban-only-20261031";
+  const retried = await env.DB.prepare("SELECT id FROM bot_migrations WHERE id=?").bind(abanRetry).first();
+  if (!retried) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE reports SET status='pending',started_at=NULL,processed_at=NULL,note='Retry Aban-only report with saved Mehr baseline' WHERE id=(SELECT MAX(id) FROM reports WHERE status='error' AND file_path IS NOT NULL) AND status='error' AND file_path IS NOT NULL"),
+      env.DB.prepare("INSERT OR IGNORE INTO bot_migrations(id) VALUES(?)").bind(abanRetry),
+    ]);
+  }
   initialized = true;
 }
 
@@ -145,7 +155,7 @@ async function mine(env, userId) {
 }
 
 async function status(env, userId) {
-  if (!(await hasData(env))) return "⏳ هنوز گزارش فروش آبان همراه با اطلاعات کامل مهر بارگذاری نشده است.";
+  if (!(await hasData(env))) return "⏳ هنوز گزارش فروش آبان پردازش نشده است.";
   const person = await mine(env, userId);
   if (!person) return "برای ثبت نام بنویسید:\nثبت نام [نام و نام خانوادگی]\nاگر همنام دارید: ثبت نام [نام] | [نام شعبه]";
   return sellerMessage(person);
@@ -376,6 +386,56 @@ export function insertMany(env, table, columns, records) {
   }
   return statements;
 }
+
+// Merge a full Aban-to-date export with the archived Mehr baseline. Keep
+// previous seller IDs, so people linked to the bot retain their identity.
+// Sellers/stores absent from the new file remain with zero current-month sales.
+export function withSavedMehrBaseline(data, previousPeople, previousStores) {
+  if (Number(data.mehr_rows || 0) > 0) return data;
+  if (!previousStores.length || !previousStores.some((s) => Number(s.mehr_m || 0) > 0)) {
+    throw Error("مبنای مهر در ربات موجود نیست؛ یک‌بار فایل شامل فروش کامل مهر و آبان را ارسال کنید.");
+  }
+  const oldStores = new Map(previousStores.map((s) => [s.store_key, s]));
+  const oldPeople = new Map(previousPeople.map((p) => [p.seller_key, p]));
+  const byIdentity = new Map();
+  const identity = (p) => p.store_key + ":" + norm(p.seller_name).split(" ").sort().join("|");
+  for (const person of previousPeople) {
+    const signature = identity(person);
+    if (!byIdentity.has(signature)) byIdentity.set(signature, person);
+    else byIdentity.set(signature, null); // Ambiguous names must not be silently merged.
+  }
+  const stores = new Map(previousStores.map((s) => [s.store_key, {
+    store: s.store, store_key: s.store_key, mehr_m: Number(s.mehr_m), aban_m: 0,
+  }]));
+  for (const current of data.stores) {
+    const old = oldStores.get(current.store_key);
+    stores.set(current.store_key, {
+      ...current, mehr_m: Number(old?.mehr_m || 0),
+    });
+  }
+  const people = new Map(previousPeople.map((p) => [p.seller_key, {
+    store: p.store, store_key: p.store_key, seller_name: p.seller_name,
+    seller_key: p.seller_key, mehr_m: Number(p.mehr_m), aban_m: 0,
+  }]));
+  for (const current of data.sellers) {
+    const old = oldPeople.get(current.seller_key) || byIdentity.get(identity(current));
+    const sellerKey = old?.seller_key || current.seller_key;
+    people.set(sellerKey, {
+      ...current,
+      seller_key: sellerKey,
+      seller_name: old?.seller_name || current.seller_name,
+      mehr_m: Number(old?.mehr_m || 0),
+    });
+  }
+  return {
+    ...data,
+    sellers: [...people.values()],
+    stores: [...stores.values()],
+    seller_count: people.size,
+    store_count: stores.size,
+    mehr_baseline_restored: true,
+  };
+}
 function statementsForSnapshot(env, data, reportId) {
   const people = [], stores = [], peopleKeys = new Set(), storeKeys = new Set();
   for (const s of data.stores) {
@@ -428,10 +488,10 @@ async function processor(request, env, url) {
     const reportId = Number(match[1]);
     const report = await env.DB.prepare("SELECT * FROM reports WHERE id=?").bind(reportId).first();
     if (!report || report.status !== "processing") return json({ error: "invalid_report_state" }, 409);
-    const data = await request.json();
+    let data = await request.json();
     if (data.period_year !== 1405 || data.period_month !== 8 ||
         !Array.isArray(data.sellers) || !Array.isArray(data.stores) ||
-        data.stores.length === 0 || Number(data.mehr_rows || 0) === 0 ||
+        data.stores.length === 0 ||
         Number(data.aban_rows || 0) === 0 || data.sellers.length > 5000) {
       return json({ error: "invalid_aban_snapshot" }, 422);
     }
@@ -439,12 +499,20 @@ async function processor(request, env, url) {
     if (Number(last?.day || 0) > Number(data.days_elapsed || 0)) {
       return json({ error: "report_is_older_than_current_snapshot" }, 409);
     }
+    if (Number(data.mehr_rows || 0) === 0) {
+      const [peopleResult, storeResult] = await Promise.all([
+        env.DB.prepare("SELECT * FROM aban_people").all(),
+        env.DB.prepare("SELECT * FROM aban_stores").all(),
+      ]);
+      data = withSavedMehrBaseline(data, peopleResult.results || [], storeResult.results || []);
+    }
     await env.DB.batch(statementsForSnapshot(env, data, reportId));
     await send(env, report.uploader_chat_id, [
       "✅ گزارش آبان پردازش و جایگزین شد.",
       "فروش تا روز " + data.days_elapsed + " آبان: " + money(data.sales_m),
       "فروشندگان: " + data.sellers.length + " | فروشگاه‌ها: " + data.stores.length,
-      "تارگت‌ها بر اساس فروش کامل مهر محاسبه شدند.",
+      data.mehr_baseline_restored ? "مبنای مهر از گزارش ثبت‌شده قبلی حفظ شد." :
+        "تارگت‌ها بر اساس فروش کامل مهر محاسبه شدند.",
     ].join("\n")).catch((err) => console.log("Upload notice failed:", String(err)));
     return json({ ok: true, saved_sellers: data.sellers.length, saved_stores: data.stores.length });
   }

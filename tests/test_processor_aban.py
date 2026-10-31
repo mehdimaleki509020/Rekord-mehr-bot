@@ -25,9 +25,12 @@ class TestAbanProcessor(unittest.TestCase):
         self.assertEqual(new["mehr_m"], 0)
         self.assertEqual(new["aban_m"], 500)
 
-    def test_no_october_baseline_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "مهر"):
-            aggregate([self.row(8, "کرمانشاه", "فروشنده", 600, 7)])
+    def test_aban_only_export_is_accepted_for_backend_baseline_restore(self):
+        report = aggregate([self.row(8, "کرمانشاه", "فروشنده", 600, 7)])
+        self.assertEqual(report["mehr_rows"], 0)
+        self.assertEqual(report["aban_rows"], 1)
+        self.assertEqual(report["sellers"][0]["mehr_m"], 0)
+        self.assertEqual(report["stores"][0]["aban_m"], 600)
 
     def test_repeated_and_reordered_names_keep_the_october_baseline(self):
         report = aggregate([
