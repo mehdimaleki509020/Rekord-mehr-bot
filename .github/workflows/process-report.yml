@@ -1,6 +1,11 @@
 name: Process Bale sales reports
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - processor_aban.py
+      - .github/workflows/process-report.yml
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
