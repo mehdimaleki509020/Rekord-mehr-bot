@@ -136,6 +136,48 @@ export function networkMessage(branches) {
   ].join("\n");
 }
 
+// A private, read-only manager report. Use the same target and award functions
+// as the seller panels, so displayed winners always match the bot's rules.
+export function winnersMessages(people) {
+  const winners = people.map((person) => ({
+    ...person,
+    award: sellerBonus(person.mehr_m, person.aban_m),
+  })).filter((person) => person.award > 0)
+    .sort((a, b) => b.award - a.award || Number(b.aban_m) - Number(a.aban_m) ||
+      String(a.seller_name).localeCompare(String(b.seller_name), "fa"));
+  const day = Math.max(0, ...people.map((person) => Number(person.days_elapsed || 0)));
+  const date = day ? " تا " + day.toLocaleString("fa-IR") + " آبان" : " تا آخرین گزارش";
+  if (!winners.length) return [[
+    "🏆 فهرست پاداش فروشندگان" + date,
+    "هنوز هیچ فروشنده‌ای به تارگت دریافت پاداش نرسیده است.",
+  ].join("\n")];
+
+  const perPage = 20;
+  const pageCount = Math.ceil(winners.length / perPage);
+  const total = winners.reduce((sum, person) => sum + person.award, 0);
+  const pages = [];
+  for (let start = 0; start < winners.length; start += perPage) {
+    const page = Math.floor(start / perPage) + 1;
+    const lines = [
+      "🏆 مشمولان پاداش آبان" + date + " | صفحه " +
+        page.toLocaleString("fa-IR") + " از " + pageCount.toLocaleString("fa-IR"),
+    ];
+    if (page === 1) lines.push(
+      "👥 تعداد مشمولان: " + winners.length.toLocaleString("fa-IR") + " نفر",
+      "💰 مجموع پاداش فعلی: " + money(total),
+      "",
+    );
+    for (const [index, person] of winners.slice(start, start + perPage).entries()) {
+      lines.push((start + index + 1).toLocaleString("fa-IR") + ") " +
+        person.seller_name + " | " + person.store +
+        "\n   فروش: " + money(person.aban_m) + " | پاداش: " + money(person.award));
+    }
+    if (page === pageCount) lines.push("\nمبالغ تا پایان ماه موقت هستند.");
+    pages.push(lines.join("\n"));
+  }
+  return pages;
+}
+
 async function hasData(env) {
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM aban_stores").first();
   return Number(row?.n || 0) > 0;
@@ -174,6 +216,14 @@ async function networkStatus(env) {
     "SELECT store,aban_m,days_elapsed FROM aban_stores ORDER BY aban_m DESC,store ASC"
   ).all()).results || [];
   return networkMessage(branches);
+}
+
+async function winnersStatus(env) {
+  const people = (await env.DB.prepare(
+    "SELECT seller_name,store,mehr_m,aban_m,days_elapsed FROM aban_people"
+  ).all()).results || [];
+  if (!people.length) return ["⏳ هنوز اطلاعات فروشندگان آبان ثبت نشده است."];
+  return winnersMessages(people);
 }
 
 async function resolveBranchName(env, text) {
@@ -282,6 +332,7 @@ async function hook(request, env) {
       "🏆 لیگ آبان | مدیر طرح",
       "• برای فروش کل و رتبه شعب: شبکه",
       "• برای جزئیات یک شعبه: فقط نام فروشگاه را بنویسید",
+      "• فروشندگان مشمول پاداش: برندگان آبان",
       "• آخرین گزارش",
       "• ارسال روزانه SalesReport.xlsb در گفت‌وگوی خصوصی",
     ].join("\n"));
@@ -313,6 +364,13 @@ async function hook(request, env) {
   }
   if (text === "شبکه" && isAdmin) {
     await send(env, chat, await networkStatus(env));
+    return new Response("OK");
+  }
+  if (text === "برندگان آبان" || text === "برندگان") {
+    if (!isAdmin) await send(env, chat, "⛔ این گزارش مخصوص مدیر طرح است.");
+    else if (message.chat?.type !== "private") await send(env, chat,
+      "برای دریافت فهرست مشمولان در گفت‌وگوی خصوصی ربات بنویسید: برندگان آبان");
+    else for (const page of await winnersStatus(env)) await send(env, chat, page);
     return new Response("OK");
   }
   if (text === "آخرین گزارش" && isAdmin) {

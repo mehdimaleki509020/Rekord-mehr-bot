@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage, networkMessage, insertMany, withSavedMehrBaseline } from "../worker_aban.js";
+import { sellerMessage, branchMessage, networkMessage, winnersMessages, insertMany, withSavedMehrBaseline } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -77,6 +77,34 @@ test("manager network screen shows total and branches by descending actual sales
   const third = message.indexOf("چالوس:");
   assert.ok(0 < first && first < second && second < third);
   assert.doesNotMatch(message, /تارگت|جایزه|فروشنده/);
+});
+
+test("manager winners report includes only qualifying sellers, descending by award", () => {
+  const people = [
+    { seller_name: "کم‌فروش", store: "چالوس", mehr_m: 200, aban_m: 400, days_elapsed: 11 },
+    { seller_name: "نفر دوم", store: "ساری", mehr_m: 0, aban_m: 600, days_elapsed: 11 },
+    { seller_name: "نفر اول", store: "کرمانشاه", mehr_m: 700, aban_m: 1000, days_elapsed: 11 },
+  ];
+  const pages = winnersMessages(people);
+  assert.equal(pages.length, 1);
+  const result = pages[0];
+  assert.match(result, /تعداد مشمولان: ۲ نفر/);
+  assert.match(result, /مجموع پاداش فعلی: ۱۶ میلیون تومان/);
+  assert.match(result, /تا ۱۱ آبان/);
+  assert.ok(result.indexOf("نفر اول | کرمانشاه") < result.indexOf("نفر دوم | ساری"));
+  assert.doesNotMatch(result, /کم‌فروش/);
+});
+
+test("manager winners report has short pages for many sellers", () => {
+  const people = Array.from({ length: 53 }, (_, i) => ({
+    seller_name: "فروشنده " + i, store: "شعبه", mehr_m: 0,
+    aban_m: 500 + i, days_elapsed: 18,
+  }));
+  const pages = winnersMessages(people);
+  assert.equal(pages.length, 3);
+  assert.ok(pages.every((page) => page.length < 4096));
+  assert.match(pages[0], /صفحه ۱ از ۳/);
+  assert.match(pages[2], /موقت/);
 });
 
 test("Aban-only exports reuse saved Mehr targets without losing old users and branches", () => {
