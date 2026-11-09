@@ -26,6 +26,15 @@ const nameKey = (value) => {
   return key(value);
 };
 const token = (env) => env.BALE_TOKEN || env.BALE_BOT_TOKEN || env.BOT_TOKEN || "";
+export async function secretWebhookPath(env) {
+  if (!token(env)) throw Error("BALE TOKEN NOT FOUND");
+  // Bale does not provide a documented signed-update header. A long,
+  // undisclosed URL path prevents arbitrary public POSTs impersonating admins.
+  const input = new TextEncoder().encode("rekord-bale-webhook-v1:" + token(env));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+  return "/webhook/" + Array.from(digest.slice(0, 20), (byte) =>
+    byte.toString(16).padStart(2, "0")).join("");
+}
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "content-type": "application/json; charset=utf-8" },
 });
@@ -649,16 +658,22 @@ export default {
         return json({ ok: true, service: "Rekord Gheyrbarghi Aban", period: "1405/08", last_report: latest || null });
       }
       if (request.method === "GET" && url.pathname === "/setup") {
-        const address = url.origin + "/webhook";
+        const address = url.origin + await secretWebhookPath(env);
         const result = await bale(env, "setWebhook", { url: address });
-        return json({ ok: true, webhook_url: address, bale: result });
+        // Never disclose the shared webhook address through a public endpoint.
+        return json({ ok: true, webhook_configured: true, bale_ok: result.ok !== false });
       }
       if (request.method === "GET" && url.pathname === "/debug") {
         const info = await bale(env, "getWebhookInfo");
         const counts = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM aban_people) AS people,(SELECT COUNT(*) FROM aban_stores) AS stores,(SELECT COUNT(*) FROM aban_links) AS links,(SELECT COUNT(*) FROM reports) AS reports").first();
-        return json({ ok: true, webhook: info.result || info, counts });
+        const web = info.result || info;
+        return json({ ok: true, webhook: {
+          configured: Boolean(web.url), pending_update_count: web.pending_update_count ?? null,
+        }, counts });
       }
-      if (request.method === "POST" && url.pathname === "/webhook") return hook(request, env);
+      if (request.method === "POST" && url.pathname === await secretWebhookPath(env)) {
+        return hook(request, env);
+      }
       return new Response("Not Found", { status: 404 });
     } catch (err) {
       console.log(err?.stack || String(err));

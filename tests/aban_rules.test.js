@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage, networkMessage, winnersMessages, insertMany, withSavedMehrBaseline, dispatchProcessor } from "../worker_aban.js";
+import { sellerMessage, branchMessage, networkMessage, winnersMessages, insertMany, withSavedMehrBaseline, dispatchProcessor, secretWebhookPath } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -124,6 +124,16 @@ test("on-demand processing requires a token and dispatches only the main workflo
   const denied = await dispatchProcessor({ GITHUB_ACTIONS_TOKEN: "test-token" }, async () =>
     ({ ok: false, status: 403 }));
   assert.deepEqual(denied, { ok: false, reason: "github_http_403" });
+});
+
+test("webhook uses a non-disclosed, token-derived path", async () => {
+  const one = await secretWebhookPath({ BALE_TOKEN: "my-bale-secret" });
+  const again = await secretWebhookPath({ BALE_TOKEN: "my-bale-secret" });
+  const changed = await secretWebhookPath({ BALE_TOKEN: "a-different-bale-secret" });
+  assert.equal(one, again);
+  assert.match(one, /^\/webhook\/[0-9a-f]{40}$/);
+  assert.notEqual(one, changed);
+  assert.doesNotMatch(one, /my-bale-secret/);
 });
 
 test("Aban-only exports reuse saved Mehr targets without losing old users and branches", () => {
