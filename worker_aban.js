@@ -170,7 +170,7 @@ export function winnersMessages(people) {
     for (const [index, person] of winners.slice(start, start + perPage).entries()) {
       lines.push((start + index + 1).toLocaleString("fa-IR") + ") " +
         person.seller_name + " | " + person.store +
-        "\n   فروش: " + money(person.aban_m) + " | پاداش: " + money(person.award));
+        " | پاداش: " + money(person.award));
     }
     if (page === pageCount) lines.push("\nمبالغ تا پایان ماه موقت هستند.");
     pages.push(lines.join("\n"));

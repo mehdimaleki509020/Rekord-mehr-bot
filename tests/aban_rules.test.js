@@ -92,6 +92,7 @@ test("manager winners report includes only qualifying sellers, descending by awa
   assert.match(result, /مجموع پاداش فعلی: ۱۶ میلیون تومان/);
   assert.match(result, /تا ۱۱ آبان/);
   assert.ok(result.indexOf("نفر اول | کرمانشاه") < result.indexOf("نفر دوم | ساری"));
+  assert.doesNotMatch(result, /فروش:/);
   assert.doesNotMatch(result, /کم‌فروش/);
 });
 
