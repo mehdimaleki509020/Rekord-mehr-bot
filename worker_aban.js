@@ -4,6 +4,8 @@ const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
 const ISS = "https://token.actions.githubusercontent.com";
 const WORKFLOW = REPO + "/.github/workflows/process-report.yml@refs/heads/main";
+const DISPATCH_URL = "https://api.github.com/repos/" + REPO +
+  "/actions/workflows/process-report.yml/dispatches";
 let initialized = false;
 let jwks = { until: 0, keys: [] };
 
@@ -44,6 +46,35 @@ async function bale(env, method, payload) {
   return data;
 }
 const send = (env, chat, text) => chat ? bale(env, "sendMessage", { chat_id: chat, text }) : Promise.resolve();
+
+// GitHub cron is best-effort and may run hours late. When a fine-grained
+// Actions:write token is configured as a Worker secret, dispatch immediately.
+// The scheduled job remains a fallback if dispatch fails or is not configured.
+export async function dispatchProcessor(env, requestFetch = fetch) {
+  const secret = String(env.GITHUB_ACTIONS_TOKEN || "").trim();
+  if (!secret) return { ok: false, reason: "not_configured" };
+  try {
+    const response = await requestFetch(DISPATCH_URL, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + secret,
+        accept: "application/vnd.github+json",
+        "content-type": "application/json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "rekord-mehr-bot",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    if (!response.ok) {
+      console.log("GitHub dispatch failed with HTTP", response.status);
+      return { ok: false, reason: "github_http_" + response.status };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.log("GitHub dispatch connection failed:", String(err?.name || "network_error"));
+    return { ok: false, reason: "network_error" };
+  }
+}
 
 async function init(env) {
   if (initialized) return;
@@ -309,7 +340,11 @@ async function upload(env, message) {
   const row = await env.DB.prepare("INSERT INTO reports(file_id,file_name,file_size,file_path,uploader_user_id,uploader_chat_id,status) VALUES(?,?,?,?,?,?,'pending')")
     .bind(String(file.file_id), name, Number(file.file_size || 0), result.result.file_path,
       String(message.from?.id || ""), String(chat)).run();
-  await send(env, chat, "✅ گزارش دریافت شد. پردازش در صف قرار گرفت. شماره: " + row.meta?.last_row_id);
+  const dispatch = await dispatchProcessor(env);
+  await send(env, chat, "✅ گزارش دریافت شد. شماره: " + row.meta?.last_row_id +
+    (dispatch.ok ? "\n🚀 دستور پردازش فوری ارسال شد." :
+      "\n⏳ در صف پردازش قرار گرفت؛ اجرای فوری " +
+      (dispatch.reason === "not_configured" ? "هنوز فعال نشده است." : "ناموفق بود و زمان‌بندی پشتیبان فعال است.")));
 }
 
 async function hook(request, env) {
@@ -333,6 +368,7 @@ async function hook(request, env) {
       "• برای فروش کل و رتبه شعب: شبکه",
       "• برای جزئیات یک شعبه: فقط نام فروشگاه را بنویسید",
       "• فروشندگان مشمول پاداش: برندگان آبان",
+      "• برای اجرای دستی صف: پردازش فوری",
       "• آخرین گزارش",
       "• ارسال روزانه SalesReport.xlsb در گفت‌وگوی خصوصی",
     ].join("\n"));
@@ -371,6 +407,24 @@ async function hook(request, env) {
     else if (message.chat?.type !== "private") await send(env, chat,
       "برای دریافت فهرست مشمولان در گفت‌وگوی خصوصی ربات بنویسید: برندگان آبان");
     else for (const page of await winnersStatus(env)) await send(env, chat, page);
+    return new Response("OK");
+  }
+  if (text === "پردازش فوری") {
+    if (!isAdmin) await send(env, chat, "⛔ مخصوص مدیر طرح است.");
+    else if (message.chat?.type !== "private") await send(env, chat,
+      "این دستور را در گفت‌وگوی خصوصی ربات ارسال کنید.");
+    else {
+      const pending = await env.DB.prepare("SELECT id FROM reports WHERE status='pending' ORDER BY id LIMIT 1").first();
+      if (!pending) await send(env, chat, "✅ در حال حاضر گزارشی در صف نیست.");
+      else {
+        const result = await dispatchProcessor(env);
+        await send(env, chat, result.ok ?
+          "🚀 درخواست پردازش گزارش شماره " + pending.id + " ارسال شد." :
+          result.reason === "not_configured" ?
+            "⏳ اجرای فوری هنوز فعال نشده است؛ توکن GitHub باید به تنظیمات ربات اضافه شود." :
+            "⚠️ اجرای فوری موفق نشد؛ گزارش همچنان در صف و منتظر زمان‌بندی پشتیبان است.");
+      }
+    }
     return new Response("OK");
   }
   if (text === "آخرین گزارش" && isAdmin) {

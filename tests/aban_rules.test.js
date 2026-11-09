@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sellerTarget, sellerBonus, supervisorBonus } from "../aban_rules.js";
-import { sellerMessage, branchMessage, networkMessage, winnersMessages, insertMany, withSavedMehrBaseline } from "../worker_aban.js";
+import { sellerMessage, branchMessage, networkMessage, winnersMessages, insertMany, withSavedMehrBaseline, dispatchProcessor } from "../worker_aban.js";
 
 test("individual targets have a 500 million floor", () => {
   assert.equal(sellerTarget(0), 500);
@@ -106,6 +106,24 @@ test("manager winners report has short pages for many sellers", () => {
   assert.ok(pages.every((page) => page.length < 4096));
   assert.match(pages[0], /صفحه ۱ از ۳/);
   assert.match(pages[2], /موقت/);
+});
+
+test("on-demand processing requires a token and dispatches only the main workflow", async () => {
+  let called = false;
+  const missing = await dispatchProcessor({}, async () => { called = true; });
+  assert.deepEqual(missing, { ok: false, reason: "not_configured" });
+  assert.equal(called, false);
+  const done = await dispatchProcessor({ GITHUB_ACTIONS_TOKEN: "test-token" }, async (url, request) => {
+    assert.match(url, /actions\/workflows\/process-report\.yml\/dispatches$/);
+    assert.equal(request.method, "POST");
+    assert.equal(request.headers.authorization, "Bearer test-token");
+    assert.deepEqual(JSON.parse(request.body), { ref: "main" });
+    return { ok: true, status: 204 };
+  });
+  assert.deepEqual(done, { ok: true });
+  const denied = await dispatchProcessor({ GITHUB_ACTIONS_TOKEN: "test-token" }, async () =>
+    ({ ok: false, status: 403 }));
+  assert.deepEqual(denied, { ok: false, reason: "github_http_403" });
 });
 
 test("Aban-only exports reuse saved Mehr targets without losing old users and branches", () => {
