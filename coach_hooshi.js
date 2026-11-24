@@ -1,3 +1,4 @@
+import { coachCategoryContext } from "./coach_metrics.js";
 // Hooshi pilot coach: private chats only, opt-in, bounded context and output.
 const MODEL = "openai/gpt-6-luna";
 const ENDPOINT = "https://api.hooshi.ai/v1/chat/completions";
@@ -36,10 +37,12 @@ export async function coachMessage(env, message, getSeller) {
   if (!reserved) return "سقف آزمایشی ۱۲ پاسخ روزانه تکمیل شده است. فردا دوباره امتحان کنید.";
   const history = (await env.DB.prepare("SELECT role,content FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT ?").bind(userId,LIMIT).all()).results.reverse();
   const target = Math.max(500,1.2*Number(seller.mehr_m||0));
+  const categoryContext = await coachCategoryContext(env, seller.seller_key);
   const system = [
     "تو مربی حرفه‌ای فروش گروه کالای غیربرقی شبکه انتخاب من هستی. فارسی روان، کوتاه و محترمانه پاسخ بده.",
     "در هر پاسخ حداکثر یک تمرین مشخص و یک سؤال پیگیری بده؛ فروش غیرصادقانه یا فشار به مشتری را توصیه نکن.",
-    "فقط از داده‌های تأییدشده استفاده کن. اطلاعات فروش گروه کالا، موجودی، تعداد فاکتور و فروش آذر در این نسخه در دسترس نیست؛ درباره آن‌ها عددسازی نکن.",
+    "فقط از اعداد تأییدشده استفاده کن. موجودی، پاخور، فاکتورها، تارگت گروهی و علت افت در دسترس نیست مگر صریحاً در داده‌ها آمده باشد. درباره آن‌ها عددسازی نکن.",
+    categoryContext,
     "اطلاعات محرمانه دیگر فروشندگان را فاش نکن. داده‌های گزارش مربوط به آبان است و ممکن است قدیمی باشد.",
     "نقش: فروشنده گروه غیربرقی",
     "فروشگاه: "+String(seller.store).slice(0,100),
