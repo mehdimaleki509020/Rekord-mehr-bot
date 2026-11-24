@@ -692,7 +692,7 @@ export default {
     const url = new URL(request.url);
     try {
       // Preview-only diagnostics: expose configuration state, never secret values.
-      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke") {
+      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
 
         if (request.method === "GET" && url.pathname === "/coach-preview-ready") {
@@ -711,13 +711,37 @@ export default {
         }
 
         // CI endpoint validates signed GitHub OIDC claims; no shared secret in Actions.
-        if (url.pathname === "/coach-ci-smoke") {
+        if (url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
           if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
           if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
           if (env.COACH_ENABLED !== "true") return json({ok:false,error:"coach_disabled"},503);
           if (!env.HOOSHI_API_KEY) return json({ok:false,error:"hooshi_key_missing"},503);
-          const result = await coachPreviewSmoke(env);
-          return json(result,result.ok?200:502);
+          if (url.pathname === "/coach-ci-smoke") {
+            const result = await coachPreviewSmoke(env);
+            return json(result,result.ok?200:502);
+          }
+          // Exercise the full private-chat coaching + D1 flow using invented records only.
+          // Clean up the synthetic user data afterward; real seller records remain untouched.
+          const userId = "__coach_ci_synthetic__:" + crypto.randomUUID();
+          const fictitiousSeller = {
+            seller_name:"فروشنده فرضی", store:"شعبه آزمایشی",
+            mehr_m:400, aban_m:450, days_elapsed:30
+          };
+          try {
+            const answer = await coachMessage(env,{
+              from:{id:userId}, chat:{type:"private",id:userId},
+              text:"مربی فروش مهر من ۴۰۰ میلیون و فروش آبان ۴۵۰ میلیون بوده؛ چرا به تارگتم نرسیدم و امروز چه تمرینی انجام دهم؟"
+            }, async () => fictitiousSeller);
+            const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM coach_messages WHERE user_id=?").bind(userId).first();
+            const storedMessages = Number(row?.n || 0);
+            const ok = storedMessages === 2 && Boolean(answer) &&
+              !/در حال حاضر در دسترس نیست|موقتاً برقرار نیست|سقف آزمایشی/.test(answer);
+            return json({ok,answer:String(answer).slice(0,1500),storedMessages,scenario:"fictional_private_chat_d1"},ok?200:502);
+          } finally {
+            // Cleanup is scoped to this random synthetic user and Preview D1 only.
+            try { await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=?").bind(userId).run(); } catch (_) {}
+            try { await env.DB.prepare("DELETE FROM coach_sessions WHERE user_id=?").bind(userId).run(); } catch (_) {}
+          }
         }
         if (url.pathname === "/coach-preview-test") {
           if (request.method !== "POST") return json({ ok:false, error:"method_not_allowed" },405);
