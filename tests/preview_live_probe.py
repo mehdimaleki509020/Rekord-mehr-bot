@@ -130,3 +130,21 @@ counts_code,counts=call(BASE+"/coach-ci-import-status", method="POST",
 print("Secure Preview import counts:",json.dumps(counts,ensure_ascii=False))
 if counts_code!=200 or not counts.get("ok"):
     sys.exit("::error::Authenticated import status is unavailable")
+
+# Bale sandbox must not control or expose the existing Production Bale webhook.
+gate, _ = call(BASE + "/setup")
+if gate != 404:
+    sys.exit("::error::Unsafe legacy Bale /setup is reachable in Preview")
+ready_code, ready_bot = call(BASE + "/coach-bale-test-ready")
+if ready_code != 200 or not ready_bot.get("isolated_preview"):
+    sys.exit("::error::Isolated Bale test readiness endpoint missing")
+bot_req = urllib.request.Request(BASE + "/coach-bale-test-page",
+    headers={"User-Agent":"RekordMehrCoachPreviewCI/1.0"})
+with urllib.request.urlopen(bot_req, timeout=15) as response:
+    bot_html = response.read(25000).decode("utf-8")
+if "coach-bale-test-setup" not in bot_html or "BALE_TEST_BOT_TOKEN" not in bot_html:
+    sys.exit("::error::Bale isolated pilot setup page is missing")
+unauthorized, _ = call(BASE + "/coach-bale-test-setup", method="POST", data=b"")
+if unauthorized != 401:
+    sys.exit("::error::Bale pilot setup is not properly secret-gated")
+print("::notice::Bale Preview isolation, protected setup, and pilot page passed without any bot token")
