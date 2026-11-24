@@ -1,4 +1,5 @@
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
+import { coachMessage } from "./coach_hooshi.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -370,6 +371,14 @@ async function hook(request, env) {
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
+  if (text === "مربی من" || text === "پاکسازی مربی" || text.startsWith("مربی ")) {
+    if (env.COACH_ENABLED !== "true") {
+      await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
+    } else {
+      await send(env, chat, await coachMessage(env, message, mine));
+    }
+    return new Response("OK");
+  }
   if (text === "/start" || text === "شروع" || text === "وضعیت من") {
     if (sup) await send(env, chat, await branchStatus(env, sup.store));
     else if (isAdmin) await send(env, chat, [
