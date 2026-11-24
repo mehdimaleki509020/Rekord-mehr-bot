@@ -36,16 +36,25 @@ try:
 except Exception as exc:
     print("::warning::Could not independently confirm Bale webhook: "+type(exc).__name__)
 
-# Verify new private knowledge-bank management UI is live without accessing data.
-page_request=urllib.request.Request(BASE+"/coach-kb-panel",headers={"User-Agent":"CoachPilotReadiness/1.0"})
-with urllib.request.urlopen(page_request,timeout=20) as res:
-    content=res.read(40000).decode("utf-8")
-if "بانک دانش اختصاصی مربی" not in content or "coach-kb-api/rules" not in content:
-    sys.exit("::error::Knowledge bank management panel is missing from live Preview")
-# Anonymous API access must be denied; verify no managerial records leak.
+# Verify knowledge UI only after Cloudflare's latest branch build has deployed.
+# PR checks can start before the new preview release is ready.
+for attempt in range(30):
+    try:
+        req=urllib.request.Request(BASE+"/coach-kb-panel",
+            headers={"User-Agent":"CoachPilotReadiness/1.0"})
+        with urllib.request.urlopen(req,timeout=15) as res:
+            content=res.read(40000).decode("utf-8")
+        if "بانک دانش اختصاصی مربی" in content and "coach-kb-api/rules" in content:
+            break
+    except (urllib.error.URLError,TimeoutError):
+        pass
+    time.sleep(7)
+else:
+    sys.exit("::error::Latest knowledge management panel not deployed to Preview")
 try:
     urllib.request.urlopen(urllib.request.Request(BASE+"/coach-kb-api/rules"),timeout=15)
     sys.exit("::error::Knowledge API allowed unauthenticated access")
-except urllib.error.HTTPError as error:
-    if error.code != 401: sys.exit("::error::Knowledge API returned unexpected anonymous status")
-print("::notice::Live private knowledge bank panel deployed and anonymous API securely blocked")
+except urllib.error.HTTPError as err:
+    if err.code != 401:
+        sys.exit("::error::Knowledge API unexpected anonymous status "+str(err.code))
+print("::notice::Preview knowledge panel available; anonymous knowledge API denied")
