@@ -660,6 +660,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      if (request.method === "GET" && url.pathname === "/coach-test") {
+        if (env.COACH_ENABLED !== "true" || !env.COACH_TEST_TOKEN) return new Response("Not Found", { status: 404 });
+        const html = `<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>آزمایش مربی هوشی</title><style>body{font:16px Tahoma,Arial,sans-serif;max-width:620px;margin:40px auto;padding:16px;line-height:2}input,button{font:inherit;padding:12px;border-radius:8px}input{width:90%;border:1px solid #aaa}button{margin-top:12px;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f4;padding:16px;border-radius:8px}</style><h2>آزمایش مربی هوشی</h2><p>فقط داده‌های فروشنده فرضی استفاده می‌شود. رمز تست را وارد کنید؛ رمز در مرورگر ذخیره نمی‌شود.</p><label for="secret">رمز تست</label><input id="secret" type="password" autocomplete="off"><button id="run">اجرای تست</button><pre id="out" aria-live="polite">آماده آزمایش</pre><script>document.getElementById("run").onclick=async()=>{const input=document.getElementById("secret"),out=document.getElementById("out");out.textContent="در حال آزمایش...";try{const r=await fetch("/coach-preview-test",{method:"POST",headers:{"x-coach-test-token":input.value}});const j=await r.json();out.textContent=j.ok?j.answer:"خطا: "+(j.error||r.status)}catch(e){out.textContent="خطای ارتباط با سرور"}finally{input.value=""}};</script></html>`;
+        return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" } });
+      }
       await init(env);
       if (url.pathname === "/coach-preview-test") {
         // Requires an independent test token. Never use a Bale or Hooshi token here.
