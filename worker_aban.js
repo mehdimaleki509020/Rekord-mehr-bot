@@ -1,3 +1,5 @@
+import { knowledgeHttp } from "./coach_knowledge_http.js";
+import { kbChat } from "./coach_knowledge.js";
 import { pilotAdminSetupPage } from "./coach_pilot_admin.js";
 import { balePilotSetupPage } from "./coach_bale_setup.js";
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
@@ -424,6 +426,14 @@ async function hook(request, env) {
   const chat = message.chat?.id;
   const user = message.from || {};
   const text = String(message.text || "").trim();
+  if (env.COACH_PILOT_PREVIEW === "yes" && message.chat?.type === "private") {
+    const knowledgeReply = await kbChat(env,message);
+    if (knowledgeReply !== null) {
+      await send(env, chat, knowledgeReply);
+      return new Response("OK");
+    }
+  }
+
 
   if (env.COACH_PILOT_PREVIEW === "yes") {
     const permitted = text === "شناسه من" || text === "/start" ||
@@ -781,6 +791,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      const kbResult=await knowledgeHttp(request,env,url);
+      if(kbResult)return kbResult;
       // Never allow the operational bot's /setup or /debug paths to run in Preview.
       // A Preview must use its OWN BALE_TEST_BOT_TOKEN, never a Production token.
       if (env.COACH_PILOT_PREVIEW === "yes" &&
