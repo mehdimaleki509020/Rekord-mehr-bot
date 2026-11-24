@@ -38,7 +38,7 @@ for attempt in range(24):
         code, result = call(BASE + "/coach-preview-ready")
         if (code == 200 and result.get("preview") is True and
                 result.get("full_coach_available") is True and
-                result.get("coach_release") == "verified-real-data-import-1" and
+                result.get("coach_release") == "verified-real-data-import-2" and
                 result.get("import_available") is True):
             ready = result
             break
@@ -122,3 +122,10 @@ with urllib.request.urlopen(page_req,timeout=15) as page_response:
 if "coach-import-batch" not in upload_html or 'type="file"' not in upload_html:
     sys.exit("::error::Preview upload page failed structural validation")
 print("::notice::Preview upload page responds successfully and accepts local JSON files")
+
+# The counts can be checked again later without exposing upload contents or a secret.
+counts_code,counts=call(BASE+"/coach-ci-import-status", method="POST",
+                        headers={"Authorization":"Bearer "+oidc},data=b"{}")
+print("Secure Preview import counts:",json.dumps(counts,ensure_ascii=False))
+if counts_code!=200 or not counts.get("ok"):
+    sys.exit("::error::Authenticated import status is unavailable")
