@@ -24,7 +24,11 @@ export async function coachMessage(env, message, getSeller) {
   const start = raw === "مربی من";
   const reset = raw === "پاکسازی مربی";
   const ask = /^مربی(?:\s+|[،,:]\s*)/u.test(raw);
-  if (!start && !reset && !ask) return null;
+  // Only in the isolated Preview may approved sellers reply naturally to AI.
+  // Never re-enable this behavior in the operational bonus bot.
+  const followUp = env.COACH_PILOT_PREVIEW === "yes" &&
+    Boolean(raw) && !raw.startsWith("/") && !start && !reset && !ask;
+  if (!start && !reset && !ask && !followUp) return null;
   if (reset) {
     // Deleting one's own conversation is allowed even after access is revoked
     // and even when the AI provider is unavailable.
@@ -40,7 +44,9 @@ export async function coachMessage(env, message, getSeller) {
   if (!seller) return "حساب شما برای دریافت اطلاعات شخصی مربی هنوز توسط مدیر طرح تأیید نشده است. از مدیر بخواهید دسترسی مربی شما را تأیید کند.";
   await ensureCoachChatTables(env);
   await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=? AND created_at<datetime(\'now\',\'-30 days\')").bind(userId).run();
-  const question = start ? "وضعیت فروش من را بررسی کن و یک تمرین عملی برای امروز پیشنهاد بده." : raw.replace(/^مربی(?:\s+|[،,:]\s*)/u, "").trim();
+  const question = start
+    ? "وضعیت فروش من را بررسی کن و یک تمرین عملی برای امروز پیشنهاد بده."
+    : (ask ? raw.replace(/^مربی(?:\s+|[،,:]\s*)/u, "").trim() : raw);
   if (!question) return "بعد از «مربی» سؤال خود را بنویسید.";
   if (question.length > MAX_CHARS) return "لطفاً سؤال را کوتاه‌تر از ۱۲۰۰ نویسه بنویسید.";
   await env.DB.prepare("INSERT OR IGNORE INTO coach_sessions(user_id,day,requests) VALUES(?,?,0)").bind(userId,today()).run();
@@ -53,6 +59,8 @@ export async function coachMessage(env, message, getSeller) {
   const system = [
     "تو مربی حرفه‌ای فروش گروه کالای غیربرقی شبکه انتخاب من هستی. فارسی روان، کوتاه و محترمانه پاسخ بده.",
     "در هر پاسخ حداکثر یک تمرین مشخص و یک سؤال پیگیری بده؛ فروش غیرصادقانه یا فشار به مشتری را توصیه نکن.",
+    "اگر فروشنده با پاسخ کوتاه مثل «سرویس‌های قابلمه»، «چینی» یا «آرکوپال» به سؤال قبلی تو جواب داد، آن را ادامه همان گفت‌وگو بدان، نه یک درخواست تازه؛ ابتدا به پاسخ او واکنش کاربردی نشان بده.",
+    "در صورت سؤال درباره نام کالا، از رده‌بندی واقعی داده‌ها استفاده کن؛ از نام یک محصول، فروش، موجودی یا ضعف واقعی آن محصول را حدس نزن.",
     "فقط از اعداد تأییدشده استفاده کن. موجودی، پاخور، فاکتورها، تارگت گروهی و علت افت در دسترس نیست مگر صریحاً در داده‌ها آمده باشد. درباره آن‌ها عددسازی نکن.",
     categoryContext,
     "اطلاعات محرمانه دیگر فروشندگان را فاش نکن. داده‌های گزارش مربوط به آبان است و ممکن است قدیمی باشد.",
