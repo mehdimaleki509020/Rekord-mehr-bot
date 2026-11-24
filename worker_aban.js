@@ -749,7 +749,7 @@ export default {
           });
         }
         if (!env.COACH_TEST_TOKEN ||
-            request.headers.get("x-coach-test-token") !== env.COACH_TEST_TOKEN)
+            request.headers.get("x-coach-test-token")?.trim() !== String(env.COACH_TEST_TOKEN).trim())
           return json({ok:false,error:"unauthorized"},401);
         await init(env);
         await ensureCoachMetricsTable(env);
