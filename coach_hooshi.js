@@ -7,6 +7,14 @@ const MAX_CHARS = 1200;
 const MAX_DAILY = 12;
 const today = () => new Date().toISOString().slice(0,10);
 
+async function ensureCoachChatTables(env) {
+  await env.DB.batch([
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_sessions(user_id TEXT PRIMARY KEY,day TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS coach_messages_user ON coach_messages(user_id,id)")
+  ]);
+}
+
 export async function coachMessage(env, message, getSeller) {
   const chatId = message.chat?.id;
   const userId = String(message.from?.id || "");
@@ -17,18 +25,21 @@ export async function coachMessage(env, message, getSeller) {
   const reset = raw === "پاکسازی مربی";
   const ask = /^مربی(?:\s+|[،,:]\s*)/u.test(raw);
   if (!start && !reset && !ask) return null;
+  if (reset) {
+    // Deleting one's own conversation is allowed even after access is revoked
+    // and even when the AI provider is unavailable.
+    await ensureCoachChatTables(env);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM coach_messages WHERE user_id=?").bind(userId),
+      env.DB.prepare("DELETE FROM coach_sessions WHERE user_id=?").bind(userId)
+    ]);
+    return "سوابق گفت‌وگوی مربی پاک شد.";
+  }
   if (!env.HOOSHI_API_KEY) return "سرویس مربی هنوز پیکربندی نشده است.";
   const seller = await getSeller(env, userId);
   if (!seller) return "حساب شما برای دریافت اطلاعات شخصی مربی هنوز توسط مدیر طرح تأیید نشده است. از مدیر بخواهید دسترسی مربی شما را تأیید کند.";
-  await env.DB.batch([
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_sessions(user_id TEXT PRIMARY KEY,day TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0)"),
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS coach_messages_user ON coach_messages(user_id,id)")
-  ]);
-  if (reset) {
-    await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=?").bind(userId).run();
-    return "سوابق گفت‌وگوی مربی پاک شد.";
-  }
+  await ensureCoachChatTables(env);
+  await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=? AND created_at<datetime(\'now\',\'-30 days\')").bind(userId).run();
   const question = start ? "وضعیت فروش من را بررسی کن و یک تمرین عملی برای امروز پیشنهاد بده." : raw.replace(/^مربی(?:\s+|[،,:]\s*)/u, "").trim();
   if (!question) return "بعد از «مربی» سؤال خود را بنویسید.";
   if (question.length > MAX_CHARS) return "لطفاً سؤال را کوتاه‌تر از ۱۲۰۰ نویسه بنویسید.";
