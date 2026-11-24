@@ -404,9 +404,9 @@ async function hook(request, env) {
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
-  if (/^تایید مربی\\s+/u.test(text) || /^تأیید مربی\\s+/u.test(text)) {
+  if (/^تایید مربی\s+/u.test(text) || /^تأیید مربی\s+/u.test(text)) {
     await send(env, chat, await approveCoachCommand(
-      env, user, message, text.replace(/^ت[اأ]یید مربی\\s+/u, "")
+      env, user, message, text.replace(/^ت[اأ]یید مربی\s+/u, "")
     ));
     return new Response("OK");
   }
@@ -741,7 +741,8 @@ export default {
             coach_enabled: env.COACH_ENABLED === "true",
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
             test_token_present: Boolean(env.COACH_TEST_TOKEN),
-            full_coach_available: true
+            full_coach_available: true,
+            coach_release: "verified-bale-approval-1"
           });
         }
 
