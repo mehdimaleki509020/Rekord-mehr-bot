@@ -1,3 +1,4 @@
+import { balePilotSetupPage } from "./coach_bale_setup.js";
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
 import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
 import { verifiedCoachSeller, approveCoachSeller } from "./coach_access.js";
@@ -408,6 +409,13 @@ async function hook(request, env) {
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
+  if (env.COACH_PILOT_PREVIEW === "yes" && text === "شناسه من") {
+    if (message.chat?.type === "private")
+      await send(env, chat, "شناسه حساب بله شما: " + String(user.id || "نامشخص") +
+        "\\nاین شناسه را فقط به مدیر پایلوت بدهید.");
+    return new Response("OK");
+  }
+
   if (/^تایید مربی\s+/u.test(text) || /^تأیید مربی\s+/u.test(text)) {
     await send(env, chat, await approveCoachCommand(
       env, user, message, text.replace(/^ت[اأ]یید مربی\s+/u, "")
@@ -739,6 +747,14 @@ export default {
       if (env.COACH_PILOT_PREVIEW === "yes" &&
           (url.pathname === "/setup" || url.pathname === "/debug" || url.pathname.startsWith("/processor/"))) {
         return json({ok:false,error:"not_found"},404);
+      }
+      if (request.method === "GET" && url.pathname === "/coach-bale-test-page") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        return new Response(balePilotSetupPage(),{
+          headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store",
+            "x-content-type-options":"nosniff",
+            "content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"}
+        });
       }
       if (url.pathname === "/coach-bale-test-ready") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
