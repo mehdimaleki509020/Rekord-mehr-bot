@@ -33,7 +33,7 @@ test("unknown product group and missing baseline are labeled cautiously", () => 
     {period:"1405-09",group_code:"tableware",sales_m:12,through_day:3},
     {period:"1405-09",group_code:"unknown",sales_m:20,through_day:3}
   ]);
-  assert.match(text,/غذاخوری/);
+  assert.match(text,/پذیرایی و سرو/);
   assert.match(text,/داده قابل‌مقایسه آبان/);
   assert.doesNotMatch(text,/unknown/);
   assert.ok(Object.isFrozen(CATEGORY_LABELS));
