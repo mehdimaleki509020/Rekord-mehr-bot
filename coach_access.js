@@ -10,6 +10,7 @@ const validUserId = (id) => /^[0-9]{1,20}$/.test(String(id ?? ""));
 
 export async function ensureCoachVerificationTable(env) {
   await env.DB.prepare(INIT_SQL).run();
+  await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS coach_verified_seller ON coach_verified_links(seller_key)").run();
 }
 
 export async function verifiedCoachSeller(env, userId) {
@@ -43,8 +44,11 @@ export async function approveCoachSeller(env, userId, sellerKey, approverId) {
     "SELECT user_id FROM coach_verified_links WHERE seller_key=? AND user_id<>?"
   ).bind(String(sellerKey),String(userId)).first();
   if (other) return {ok:false,error:"seller_already_assigned"};
-  await env.DB.prepare(
+  const written = await env.DB.prepare(
     "INSERT OR IGNORE INTO coach_verified_links(user_id,seller_key,approved_by) VALUES(?,?,?)"
   ).bind(String(userId),String(sellerKey),String(approverId)).run();
-  return {ok:true};
+  const finalRow = await env.DB.prepare(
+    "SELECT seller_key FROM coach_verified_links WHERE user_id=?"
+  ).bind(String(userId)).first();
+  return finalRow?.seller_key === String(sellerKey) ? {ok:true} : {ok:false,error:"approval_conflict"};
 }
