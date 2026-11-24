@@ -58,3 +58,24 @@ except urllib.error.HTTPError as err:
     if err.code not in (401,403):
         sys.exit("::error::Knowledge API unexpected anonymous status "+str(err.code))
 print("::notice::Preview knowledge panel available; anonymous knowledge API denied")
+
+# Live operational intake readiness. No report records, IDs or secrets returned.
+for attempt in range(30):
+    try:
+        q=urllib.request.Request(BASE+"/coach-ops-ready",headers={"User-Agent":"CoachPilotReadiness/1.0"})
+        with urllib.request.urlopen(q,timeout=15) as res: ops=json.load(res)
+        if ops.get("release")=="ops-pilot-1" and ops.get("isolated_preview") is True:
+            print("Operational Preview readiness (public booleans):",json.dumps(ops))
+            break
+    except (urllib.error.URLError,TimeoutError,ValueError):
+        pass
+    time.sleep(7)
+else:
+    sys.exit("::error::Operational Preview release unavailable")
+try:
+    q=urllib.request.Request(BASE+"/coach-ops-processor/pending",method="POST",headers={"User-Agent":"CoachPilotReadiness/1.0"})
+    urllib.request.urlopen(q,timeout=15)
+    sys.exit("::error::Anonymous operational queue access was allowed")
+except urllib.error.HTTPError as e:
+    if e.code not in (401,403):sys.exit("::error::Unexpected queue protection status "+str(e.code))
+print("::notice::Anonymous operational queue access denied")

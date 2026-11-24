@@ -1,3 +1,4 @@
+import { opsUpload, opsAdminCommand, opsHttp } from "./coach_ops.js";
 import { knowledgeHttp } from "./coach_knowledge_http.js";
 import { kbChat } from "./coach_knowledge.js";
 import { pilotAdminSetupPage } from "./coach_pilot_admin.js";
@@ -418,7 +419,16 @@ async function hook(request, env) {
   const update = await request.json();
   const message = update.message;
   if (!message) return new Response("OK");
-  if (message.document && env.COACH_PILOT_PREVIEW === "yes") return new Response("OK");
+  if (message.document && env.COACH_PILOT_PREVIEW === "yes") {
+    try {
+      await opsUpload(env,message,{isAdmin:admin,getFile:(e,id)=>bale(e,"getFile",{file_id:id}),send});
+    } catch {
+      console.log("Preview report intake unavailable");
+      if(message.chat?.type==="private" && await admin(env,message.from||{}))
+        await send(env,message.chat.id,"دریافت گزارش ناموفق بود؛ دوباره فایل را ارسال کنید.").catch(()=>{});
+    }
+    return new Response("OK");
+  }
   if (message.document) {
     await upload(env, message);
     return new Response("OK");
@@ -426,6 +436,7 @@ async function hook(request, env) {
   const chat = message.chat?.id;
   const user = message.from || {};
   const text = String(message.text || "").trim();
+  if (env.COACH_PILOT_PREVIEW === "yes" && await opsAdminCommand(env,message,{isAdmin:admin,send})) return new Response("OK");
   if (env.COACH_PILOT_PREVIEW === "yes" && message.chat?.type === "private") {
     const knowledgeReply = await kbChat(env,message);
     if (knowledgeReply !== null) {
@@ -629,6 +640,32 @@ async function authorizeCoachCI(request) {
   } catch { return false; }
 }
 
+
+// A different signed OIDC audience, exact Preview ref and workflow. Production
+// credentials and PR/other branch tokens cannot claim or read operational reports.
+async function authorizeOpsProcessor(request) {
+  try {
+    const bearer=request.headers.get("authorization")||"";
+    if(!bearer.startsWith("Bearer "))return false;
+    const parts=bearer.slice(7).split(".");
+    if(parts.length!==3)return false;
+    const header=decode(parts[0]),claims=decode(parts[1]);
+    const now=Math.floor(Date.now()/1000);
+    const aud=Array.isArray(claims.aud)?claims.aud:[claims.aud];
+    const ref="refs/heads/feature/hooshi-coach-bale-new-preview";
+    if(header.alg!=="RS256"||claims.iss!==ISS||!aud.includes("rekord-mehr-coach-ops-preview")||
+      claims.repository!==REPO||String(claims.repository_id)!=="1381436999"||
+      claims.ref!==ref||claims.event_name!=="workflow_dispatch"||
+      claims.workflow_ref!==REPO+"/.github/workflows/process-report.yml@"+ref||
+      !Number.isFinite(claims.exp)||claims.exp<=now||claims.exp>now+900||
+      (claims.nbf&&claims.nbf>now)||(claims.iat&&claims.iat>now+60))return false;
+    const jwk=(await signingKeys()).find(x=>x.kid===header.kid);
+    if(!jwk)return false;
+    const publicKey=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
+    return await crypto.subtle.verify({name:"RSASSA-PKCS1-v1_5"},publicKey,decode64(parts[2]),new TextEncoder().encode(parts[0]+"."+parts[1]));
+  }catch{return false;}
+}
+
 function finiteAmount(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || Math.abs(amount) > 1e10) throw Error("Invalid sales amount");
@@ -791,6 +828,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      if(url.pathname.startsWith("/coach-ops-")){
+        try{return await opsHttp(request,env,url,{authorize:authorizeOpsProcessor,send});}
+        catch{console.log("Preview operational endpoint unavailable");return json({ok:false,error:"ops_unavailable"},503);}
+      }
       const kbResult=await knowledgeHttp(request,env,url);
       if(kbResult)return kbResult;
       // Never allow the operational bot's /setup or /debug paths to run in Preview.
