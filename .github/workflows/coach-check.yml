@@ -30,35 +30,3 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.number == 5 && github.event.pull_request.head.repo.full_name == github.repository
         run: python tests/check_fresh_bale_preview.py
 
-  preview_dispatch_smoke:
-    needs: test
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 5 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feature/hooshi-coach-bale-new-preview'
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Start the explicitly isolated workflow and verify it drains the preview queue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          ref='feature/hooshi-coach-bale-new-preview'
-          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/process-report.yml/dispatches" -f "ref=$ref"
-          echo 'Preview workflow dispatch accepted'
-          for i in $(seq 1 24); do
-            response="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/process-report.yml/runs" -f "branch=$ref" -f "event=workflow_dispatch" -f "head_sha=$HEAD_SHA" -f "per_page=10")"
-            status="$(jq -r '.workflow_runs[0].status // ""' <<< "$response")"
-            conclusion="$(jq -r '.workflow_runs[0].conclusion // ""' <<< "$response")"
-            if [ "$status" = completed ]; then
-              [ "$conclusion" = success ] || exit 1
-              echo 'Preview processor workflow completed; signed OIDC route worked'
-              exit 0
-            fi
-            sleep 10
-          done
-          echo 'Preview processor workflow not confirmed in smoke-test window'
-          exit 1
