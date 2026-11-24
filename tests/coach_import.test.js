@@ -52,8 +52,10 @@ test("import form is local-file based and never embeds private sales",()=>{
 
 test("real upload-page inline JavaScript must parse in browser",()=>{
  const html=coachImportPage();
- const match=html.match(/<script>([\\s\\S]*?)<\\/script>/i);
- assert.ok(match,"HTML should embed its uploader script");
- assert.doesNotThrow(()=>new Script(match[1],{filename:"coach-import-page-inline.js"}));
- assert.match(match[1],/fetch\\("\\/coach-import-batch"/);
+ const start=html.indexOf("<script>");
+ const end=html.indexOf("</script>",start);
+ assert.ok(start>=0 && end>start,"HTML should embed its uploader script");
+ const inline=html.slice(start+"<script>".length,end);
+ assert.doesNotThrow(()=>new Script(inline,{filename:"coach-import-page-inline.js"}));
+ assert.ok(inline.includes('fetch("/coach-import-batch"'));
 });
