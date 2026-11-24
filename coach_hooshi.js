@@ -15,7 +15,8 @@ export async function coachMessage(env, message, getSeller) {
   const raw = String(message.text || "").trim();
   const start = raw === "مربی من";
   const reset = raw === "پاکسازی مربی";
-  if (!start && !reset && !raw.startsWith("مربی ")) return null;
+  const ask = /^مربی(?:\s+|[،,:]\s*)/u.test(raw);
+  if (!start && !reset && !ask) return null;
   if (!env.HOOSHI_API_KEY) return "سرویس مربی هنوز پیکربندی نشده است.";
   const seller = await getSeller(env, userId);
   if (!seller) return "حساب شما برای دریافت اطلاعات شخصی مربی هنوز توسط مدیر طرح تأیید نشده است. از مدیر بخواهید دسترسی مربی شما را تأیید کند.";
@@ -28,7 +29,7 @@ export async function coachMessage(env, message, getSeller) {
     await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=?").bind(userId).run();
     return "سوابق گفت‌وگوی مربی پاک شد.";
   }
-  const question = start ? "وضعیت فروش من را بررسی کن و یک تمرین عملی برای امروز پیشنهاد بده." : raw.slice(5).trim();
+  const question = start ? "وضعیت فروش من را بررسی کن و یک تمرین عملی برای امروز پیشنهاد بده." : raw.replace(/^مربی(?:\s+|[،,:]\s*)/u, "").trim();
   if (!question) return "بعد از «مربی» سؤال خود را بنویسید.";
   if (question.length > MAX_CHARS) return "لطفاً سؤال را کوتاه‌تر از ۱۲۰۰ نویسه بنویسید.";
   await env.DB.prepare("INSERT OR IGNORE INTO coach_sessions(user_id,day,requests) VALUES(?,?,0)").bind(userId,today()).run();
