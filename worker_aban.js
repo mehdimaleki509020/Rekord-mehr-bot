@@ -1,3 +1,4 @@
+import { pilotAdminSetupPage } from "./coach_pilot_admin.js";
 import { balePilotSetupPage } from "./coach_bale_setup.js";
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
 import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
@@ -303,8 +304,14 @@ async function admin(env, user, claim = false) {
         .bind(String(user.id)).first();
       return Boolean(row);
     }
-    return Boolean(env.COACH_PILOT_ADMIN_ID) &&
-      String(env.COACH_PILOT_ADMIN_ID) === String(user.id);
+    // Explicit one-time manager approval persisted only in the isolated Preview D1.
+    await env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS coach_pilot_admins(user_id TEXT PRIMARY KEY,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+    ).run();
+    const row = await env.DB.prepare(
+      "SELECT user_id FROM coach_pilot_admins WHERE user_id=?"
+    ).bind(String(user.id)).first();
+    return Boolean(row);
   }
   const ids = String(env.ADMIN_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   if (ids.includes(String(user.id))) return true;
@@ -440,7 +447,7 @@ async function hook(request, env) {
   if (env.COACH_PILOT_PREVIEW === "yes" && text === "شناسه من") {
     if (message.chat?.type === "private")
       await send(env, chat, "شناسه حساب بله شما: " + String(user.id || "نامشخص") +
-        "\\nاین شناسه را فقط به مدیر پایلوت بدهید.");
+        "\nاین شناسه را فقط به مدیر پایلوت بدهید.");
     return new Response("OK");
   }
 
@@ -803,6 +810,50 @@ export default {
           expected_bot_username_present:Boolean(env.COACH_TEST_BOT_USERNAME),
           test_password_present:Boolean(env.COACH_TEST_TOKEN),
           sales_snapshot_ready:salesReady});
+      }
+      // Grant ONE verified real Bale account managerial authority in isolated Preview only.
+      if (request.method === "GET" && url.pathname === "/coach-pilot-admin-page") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        return new Response(pilotAdminSetupPage(),{
+          headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store",
+            "x-content-type-options":"nosniff",
+            "content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"}
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/coach-pilot-admin-setup") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        if (!env.COACH_TEST_TOKEN ||
+            request.headers.get("x-coach-test-token")?.trim() !== String(env.COACH_TEST_TOKEN).trim())
+          return json({ok:false,error:"unauthorized"},401);
+        const body = await request.text();
+        if (body.length > 256) return json({ok:false,error:"invalid_payload"},400);
+        let submitted;
+        try { submitted = JSON.parse(body); } catch (_) {
+          return json({ok:false,error:"invalid_json"},400);
+        }
+        const id = String(submitted?.user_id || "");
+        if (!/^[1-9][0-9]{3,19}$/.test(id)) return json({ok:false,error:"invalid_id"},400);
+        if (!env.BALE_TEST_BOT_TOKEN || !env.COACH_TEST_BOT_USERNAME)
+          return json({ok:false,error:"test_bot_not_configured"},503);
+        // Do not register an unknown Bale identity. The user must first have
+        // started the dedicated test bot and requested "شناسه من".
+        const remote = await bale(env,"getChat",{chat_id:id});
+        const remoteId = String(remote?.result?.id || "");
+        if (remoteId !== id || remote?.result?.type !== "private")
+          return json({ok:false,error:"bale_identity_not_verified"},409);
+        await init(env);
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS coach_pilot_admins(user_id TEXT PRIMARY KEY,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+        ).run();
+        const count = await env.DB.prepare(
+          "SELECT user_id FROM coach_pilot_admins LIMIT 1"
+        ).first();
+        if (count && String(count.user_id) !== id)
+          return json({ok:false,error:"admin_already_configured"},409);
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO coach_pilot_admins(user_id) VALUES(?)"
+        ).bind(id).run();
+        return json({ok:true,admin_registered:true,preview:true});
       }
       if (request.method === "GET" && url.pathname === "/coach-bale-test-connection") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
