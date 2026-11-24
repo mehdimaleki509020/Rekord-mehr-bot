@@ -59,19 +59,19 @@ def process(job):
             kind,rows=parse(path)
         meta=request(root+"begin",data={"kind":kind,"hash":digest,"count":len(rows)},lease=lease)
         if meta.get("duplicate"):
-            print("Duplicate report skipped",job_id)
+            print("Duplicate report skipped")
             return
         for i in range(0,len(rows),80):
             request(root+"batch",data={"rows":rows[i:i+80]},lease=lease)
         done=request(root+"finish",data={},lease=lease)
-        print("Validated report",job_id,"kind",kind,"records",done["rows"])
+        print("Validated operational report")
     except Exception as exc:
         if isinstance(exc,ReportError) and str(exc) in {"unsupported_layout","ambiguous_layout","invalid_data","too_large","empty_data","parse_error"}:
             reason=str(exc)
         elif isinstance(exc,(ValueError,UnicodeError)):reason="parse_error"
         else:reason="processor_error"
         # Never log exception strings, file contents, names, token, paths or HTTP body.
-        print("Report requires attention",job_id,reason)
+        print("Operational report requires attention")
         try:request(root+"fail",data={"reason":reason},lease=lease)
         except Exception:print("Could not record report failure; lease will expire")
         
