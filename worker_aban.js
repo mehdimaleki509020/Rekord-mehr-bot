@@ -1,6 +1,7 @@
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
 import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
 import { verifiedCoachSeller, approveCoachSeller } from "./coach_access.js";
+import { ensureCoachMetricsTable } from "./coach_metrics.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -742,7 +743,7 @@ export default {
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
             test_token_present: Boolean(env.COACH_TEST_TOKEN),
             full_coach_available: true,
-            coach_release: "verified-bale-approval-1"
+            coach_release: "azar-group-metrics-1"
           });
         }
 
@@ -794,6 +795,18 @@ export default {
             await env.DB.prepare(
               "INSERT INTO admins(user_id,first_name,username) VALUES(?,?,?)"
             ).bind(adminId,"مدیر آزمایش","coach_ci_admin").run();
+            await ensureCoachMetricsTable(env);
+            const fakeGroupRows = [
+              ["1405-08",3,"cookware",120],
+              ["1405-09",3,"cookware",80],
+              ["1405-08",3,"tableware",30],
+              ["1405-09",3,"tableware",45],
+            ];
+            for (const [period,day,group,sales] of fakeGroupRows) {
+              await env.DB.prepare(
+                "INSERT INTO coach_group_sales(seller_key,period,through_day,group_code,sales_m,source_ref) VALUES(?,?,?,?,?,?)"
+              ).bind(sellerKey,period,day,group,sales,"ci-fictitious-only").run();
+            }
             // The outsider self-registers a known name, but that is not coach authorization.
             await env.DB.prepare(
               "INSERT INTO aban_links(user_id,seller_key) VALUES(?,?)"
@@ -818,14 +831,14 @@ export default {
               !sent[0].text.includes("۴۵۰");
             sent.length = 0;
             await runBale(makeMessage(userId,
-              "مربی برای بهبود فروش امروز چه کاری انجام دهم؟"));
+              "مربی، فروش گروه پخت‌وپز من در آذر نسبت به آبان چه تغییری کرده؟ یک تمرین کاربردی پیشنهاد کن."));
             answer = sent[0]?.text || "";
             const row = await env.DB.prepare(
               "SELECT COUNT(*) AS n FROM coach_messages WHERE user_id=?"
             ).bind(userId).first();
             storedMessages = Number(row?.n || 0);
             const ok = approvalOk && unapprovedBlocked && privateOnly &&
-              storedMessages === 2 && Boolean(answer) &&
+              storedMessages === 2 && Boolean(answer) && /پخت.?و.?پز|قابلمه/.test(answer) &&
               !/در حال حاضر در دسترس نیست|موقتاً برقرار نیست|سقف آزمایشی/.test(answer);
             return json({ok,approvalOk,unapprovedBlocked,privateOnly,
               storedMessages,answer:answer.slice(0,1500),
@@ -836,6 +849,7 @@ export default {
               ["coach_messages","user_id",userId],
               ["coach_sessions","user_id",userId],
               ["coach_verified_links","user_id",userId],
+              ["coach_group_sales","seller_key",sellerKey],
               ["aban_links","user_id",outsiderId],
               ["admins","user_id",adminId],
               ["aban_people","seller_key",sellerKey],
