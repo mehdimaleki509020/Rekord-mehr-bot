@@ -1,5 +1,5 @@
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
-import { coachMessage } from "./coach_hooshi.js";
+import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -661,6 +661,15 @@ export default {
     const url = new URL(request.url);
     try {
       await init(env);
+      if (url.pathname === "/coach-preview-test") {
+        // Requires an independent test token. Never use a Bale or Hooshi token here.
+        if (request.method !== "POST" || env.COACH_ENABLED !== "true" ||
+            !env.COACH_TEST_TOKEN || request.headers.get("x-coach-test-token") !== env.COACH_TEST_TOKEN) {
+          return json({ ok: false, error: "not_found" }, 404);
+        }
+        const result = await coachPreviewSmoke(env);
+        return json(result, result.ok ? 200 : 502);
+      }
       if (url.pathname.startsWith("/processor/")) return processor(request, env, url);
       if (request.method === "GET" && url.pathname === "/") {
         const latest = await env.DB.prepare("SELECT id,status,processed_at FROM reports ORDER BY id DESC LIMIT 1").first();
