@@ -24,3 +24,14 @@ for attempt in range(30):
     time.sleep(7)
 else:
     sys.exit("::error::Fresh Bale Preview did not receive test bot bindings")
+
+# Read-only live webhook check. Does not expose credentials or callback URL.
+try:
+    req=urllib.request.Request(BASE+"/coach-bale-test-connection",headers={"User-Agent":"CoachPilotReadiness/1.0"})
+    with urllib.request.urlopen(req,timeout=20) as response:
+        connection=json.load(response)
+    print("Bale webhook live status (no secrets):",json.dumps(connection,ensure_ascii=False))
+    if not connection.get("webhook_connected"):
+        print("::warning::User may need to recheck Bale test setup before first message")
+except Exception as exc:
+    print("::warning::Could not independently confirm Bale webhook: "+type(exc).__name__)
