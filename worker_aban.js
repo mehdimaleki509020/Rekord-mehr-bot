@@ -411,7 +411,7 @@ async function hook(request, env) {
     ));
     return new Response("OK");
   }
-  if (text === "مربی من" || text === "پاکسازی مربی" || text.startsWith("مربی ")) {
+  if (text === "مربی من" || text === "پاکسازی مربی" || /^مربی(?:\s+|[،,:]\s*)/u.test(text)) {
     if (env.COACH_ENABLED !== "true") {
       await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
     } else {
