@@ -113,3 +113,12 @@ print("Synthetic import result:",json.dumps(imp,ensure_ascii=False))
 if imp_code!=200 or not imp.get("ok") or not imp.get("persisted"):
     sys.exit("::error::Preview batch importer verification did not pass")
 print("::notice::Preview sales importer verified without uploading any real seller data")
+
+# Verify real upload page exists without sending any seller data or API secrets.
+page_req=urllib.request.Request(BASE+"/coach-import-page",
+     headers={"User-Agent":"RekordMehrCoachPreviewCI/1.0"})
+with urllib.request.urlopen(page_req,timeout=15) as page_response:
+    upload_html=page_response.read(22000).decode("utf-8")
+if "coach-import-batch" not in upload_html or 'type="file"' not in upload_html:
+    sys.exit("::error::Preview upload page failed structural validation")
+print("::notice::Preview upload page responds successfully and accepts local JSON files")
