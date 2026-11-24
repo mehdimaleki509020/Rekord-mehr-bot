@@ -19,9 +19,11 @@ export async function ensureOps(env){
  if(env.COACH_PILOT_PREVIEW!=="yes"||!env.DB)throw Error("preview_only");
  await env.DB.batch([
   env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_ops_reports(id INTEGER PRIMARY KEY AUTOINCREMENT,bale_id TEXT NOT NULL UNIQUE,file_id TEXT NOT NULL,file_name TEXT NOT NULL,file_path TEXT NOT NULL,file_size INTEGER NOT NULL,admin_id TEXT NOT NULL,chat_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',kind TEXT NOT NULL DEFAULT '',content_hash TEXT NOT NULL DEFAULT '',expected_count INTEGER NOT NULL DEFAULT 0,row_count INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL DEFAULT '',lease TEXT NOT NULL DEFAULT '',received_at TEXT DEFAULT CURRENT_TIMESTAMP,started_at TEXT,finished_at TEXT)"),
+  env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_ops_rows(report_id INTEGER NOT NULL,kind TEXT NOT NULL,store_key TEXT NOT NULL,seller_key TEXT NOT NULL DEFAULT '',group_code TEXT NOT NULL DEFAULT 'all',sku TEXT NOT NULL DEFAULT '',period TEXT NOT NULL,date_from TEXT NOT NULL,date_to TEXT NOT NULL,value REAL NOT NULL,label TEXT NOT NULL DEFAULT '',PRIMARY KEY(report_id,store_key,seller_key,group_code,sku,period,date_from,date_to))")
+ ]);
+ await env.DB.batch([
   env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS coach_ops_ready_hash ON coach_ops_reports(content_hash) WHERE status='ready' AND content_hash<>''"),
   env.DB.prepare("CREATE INDEX IF NOT EXISTS coach_ops_queue ON coach_ops_reports(status,id)"),
-  env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_ops_rows(report_id INTEGER NOT NULL,kind TEXT NOT NULL,store_key TEXT NOT NULL,seller_key TEXT NOT NULL DEFAULT '',group_code TEXT NOT NULL DEFAULT 'all',sku TEXT NOT NULL DEFAULT '',period TEXT NOT NULL,date_from TEXT NOT NULL,date_to TEXT NOT NULL,value REAL NOT NULL,label TEXT NOT NULL DEFAULT '',PRIMARY KEY(report_id,store_key,seller_key,group_code,sku,period,date_from,date_to))"),
   env.DB.prepare("CREATE INDEX IF NOT EXISTS coach_ops_scope ON coach_ops_rows(kind,store_key,period,date_to,report_id)")
  ]);
 }
