@@ -515,8 +515,8 @@ async function authorizeCoachCI(request) {
       String(claims.repository_id) !== "1381436999" ||
       String(claims.actor_id) !== "332474987" ||
       claims.event_name !== "pull_request" ||
-      claims.ref !== "refs/pull/3/merge" ||
-      claims.workflow_ref !== REPO + "/.github/workflows/coach-check.yml@refs/pull/3/merge" ||
+      claims.ref !== "refs/pull/4/merge" ||
+      claims.workflow_ref !== REPO + "/.github/workflows/coach-check.yml@refs/pull/4/merge" ||
       !claims.exp || claims.exp < now || (claims.nbf && claims.nbf > now) ||
       (claims.iat && claims.iat > now + 60)) return false;
   const jwk = (await signingKeys()).find(value => value.kid === header.kid);
