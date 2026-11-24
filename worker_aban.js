@@ -1,5 +1,6 @@
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
 import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
+import { verifiedCoachSeller, approveCoachSeller } from "./coach_access.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -316,6 +317,32 @@ async function register(env, userId, input) {
   return sellerMessage(person);
 }
 
+async function approveCoachCommand(env, user, message, input) {
+  // Approval MUST be linked to the actual Bale account by replying to that person's message.
+  // Self-service registrations by display name are not trusted for personalized coaching.
+  if (!(await admin(env, user))) return "⛔ فقط مدیر طرح مجاز به تأیید مربی است.";
+  const target = message.reply_to_message?.from;
+  if (!target?.id || target.is_bot) return "برای تأیید، روی پیام همان فروشنده Reply کنید و بنویسید: تایید مربی نام کامل | نام شعبه";
+  const parts = input.split("|").map(x=>x.trim());
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return "فرمت دستور: تایید مربی نام کامل | نام شعبه";
+  }
+  const sellerName = nameKey(parts[0]);
+  const storeName = key(parts[1]);
+  // Match the full name exactly after Persian character normalization.
+  const person = (await env.DB.prepare(
+    "SELECT seller_key,seller_name,store FROM aban_people WHERE store_key=?"
+  ).bind(storeName).all()).results.filter(p=>nameKey(p.seller_name)===sellerName);
+  if (person.length !== 1) return "فروشنده دقیقاً در گزارش این شعبه پیدا نشد؛ نام کامل و شعبه را بررسی کنید.";
+  const result = await approveCoachSeller(env, target.id, person[0].seller_key, user.id);
+  if (!result.ok) return result.error === "already_assigned" ?
+    "این حساب قبلاً به فروشنده دیگری متصل شده است؛ تغییر آن نیاز به بررسی مدیر دارد." :
+    result.error === "seller_already_assigned" ?
+    "این فروشنده قبلاً برای حساب دیگری تأیید شده است؛ درخواست بررسی کنید." :
+    "تأیید انجام نشد. اطلاعات را بررسی کنید.";
+  return "✅ دسترسی مربی برای حساب فروشنده تأیید شد. در گفت‌وگوی خصوصی ربات بنویسد: مربی من";
+}
+
 async function assignSupervisor(env, user, message, storeName) {
   if (!(await admin(env, user))) return "⛔ مخصوص مدیر طرح است.";
   const target = message.reply_to_message?.from;
@@ -371,11 +398,17 @@ async function hook(request, env) {
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
+  if (/^تایید مربی\\s+/u.test(text) || /^تأیید مربی\\s+/u.test(text)) {
+    await send(env, chat, await approveCoachCommand(
+      env, user, message, text.replace(/^ت[اأ]یید مربی\\s+/u, "")
+    ));
+    return new Response("OK");
+  }
   if (text === "مربی من" || text === "پاکسازی مربی" || text.startsWith("مربی ")) {
     if (env.COACH_ENABLED !== "true") {
       await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
     } else {
-      await send(env, chat, await coachMessage(env, message, mine));
+      await send(env, chat, await coachMessage(env, message, verifiedCoachSeller));
     }
     return new Response("OK");
   }
