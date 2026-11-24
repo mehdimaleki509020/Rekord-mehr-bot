@@ -35,3 +35,17 @@ try:
         print("::warning::User may need to recheck Bale test setup before first message")
 except Exception as exc:
     print("::warning::Could not independently confirm Bale webhook: "+type(exc).__name__)
+
+# Verify new private knowledge-bank management UI is live without accessing data.
+page_request=urllib.request.Request(BASE+"/coach-kb-panel",headers={"User-Agent":"CoachPilotReadiness/1.0"})
+with urllib.request.urlopen(page_request,timeout=20) as res:
+    content=res.read(40000).decode("utf-8")
+if "بانک دانش اختصاصی مربی" not in content or "coach-kb-api/rules" not in content:
+    sys.exit("::error::Knowledge bank management panel is missing from live Preview")
+# Anonymous API access must be denied; verify no managerial records leak.
+try:
+    urllib.request.urlopen(urllib.request.Request(BASE+"/coach-kb-api/rules"),timeout=15)
+    sys.exit("::error::Knowledge API allowed unauthenticated access")
+except urllib.error.HTTPError as error:
+    if error.code != 401: sys.exit("::error::Knowledge API returned unexpected anonymous status")
+print("::notice::Live private knowledge bank panel deployed and anonymous API securely blocked")
