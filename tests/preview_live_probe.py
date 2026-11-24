@@ -119,7 +119,8 @@ page_req=urllib.request.Request(BASE+"/coach-import-page",
      headers={"User-Agent":"RekordMehrCoachPreviewCI/1.0"})
 with urllib.request.urlopen(page_req,timeout=15) as page_response:
     upload_html=page_response.read(22000).decode("utf-8")
-if "coach-import-batch" not in upload_html or 'type="file"' not in upload_html:
+if ("coach-import-batch" not in upload_html or 'type="file"' not in upload_html or
+    "در حال بررسی رمز و اتصال به Preview" not in upload_html):
     sys.exit("::error::Preview upload page failed structural validation")
 print("::notice::Preview upload page responds successfully and accepts local JSON files")
 
