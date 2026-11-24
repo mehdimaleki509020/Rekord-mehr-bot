@@ -199,3 +199,32 @@ test("successful coaching does not refund quota",async()=>{
    assert.ok(!statements.some(x=>x.includes("requests=MAX(0,requests-1)")));
  }finally{globalThis.fetch=originalFetch;}
 });
+
+test("system context labels amounts as individual sales and avoids pretending store totals",async()=>{
+ const {coachMessage}=await import("../coach_hooshi.js");
+ const oldFetch=globalThis.fetch;
+ let systemText="";
+ globalThis.fetch=async(_url,options)=>{
+   const body=JSON.parse(options.body);
+   systemText=body.messages[0].content;
+   return {ok:true,async json(){return {choices:[{message:{content:"به نیاز مشتری برای برنج ۱۲ نفر توجه کنید."}}]}}};
+ };
+ const DB={
+   prepare(sql){return {args:[],bind(...args){this.args=args;return this;},
+     async run(){return {};},async first(){return sql.includes("RETURNING requests")?{requests:1}:null;},
+     async all(){return {results:[]}}};},
+   async batch(items){for(const stmt of items) await stmt.run();}
+ };
+ try{
+   const response=await coachMessage({DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"fake"},
+     {from:{id:1487},chat:{id:1487,type:"private"},text:"برای برنج ۱۲ نفر چه قابلمه‌ای مناسب است؟"},
+     async()=>({seller_key:"test:person",store:"شعبه ساختگی",mehr_m:654.12,aban_m:845.66,days_elapsed:30}));
+   assert.match(response,/برنج/);
+   assert.match(systemText,/فروش شخصی همین فروشنده در آبان/);
+   assert.match(systemText,/845.66/);
+   assert.match(systemText,/فروش فروشگاه/);
+   assert.match(systemText,/جمع فروش فروشگاه اصلاً به تو داده نشده/);
+   assert.match(systemText,/روزهای ۱ و ۲ آبان و آذر/);
+   assert.match(systemText,/بدون نیاز، گفتگو را به تارگت آبان/);
+ }finally{globalThis.fetch=oldFetch;}
+});
