@@ -59,3 +59,11 @@ test("real upload-page inline JavaScript must parse in browser",()=>{
  assert.doesNotThrow(()=>new Script(inline,{filename:"coach-import-page-inline.js"}));
  assert.ok(inline.includes('fetch("/coach-import-batch"'));
 });
+
+test("uploader preflights a private token before reading the local file",()=>{
+ const html=coachImportPage();
+ assert.ok(html.indexOf('fetch("/coach-import-status"')>=0);
+ assert.ok(html.indexOf('fetch("/coach-import-status"')<html.indexOf("await file.text()"));
+ assert.match(html,/رمز COACH_TEST_TOKEN این Preview/);
+ assert.match(html,/value\.trim\(\)/);
+});
