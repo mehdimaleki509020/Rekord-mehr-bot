@@ -15,7 +15,11 @@ BASE = "https://feature-hooshi-coach-fresh-preview-rekord-mehr-bot.mehdimaleki50
 AUD = "rekord-mehr-bot-coach-preview"
 
 def call(url, *, method="GET", headers=None, data=None):
-    req = urllib.request.Request(url, method=method, headers=headers or {}, data=data)
+    # Cloudflare error 1010 rejects Python-urllib's default User-Agent on workers.dev.
+    # Identify the legitimate CI client explicitly (per Cloudflare's official docs).
+    client_headers = {"User-Agent": "RekordMehrCoachPreviewCI/1.0"}
+    client_headers.update(headers or {})
+    req = urllib.request.Request(url, method=method, headers=client_headers, data=data)
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             return response.status, json.load(response)
