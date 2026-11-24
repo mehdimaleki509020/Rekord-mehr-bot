@@ -28,3 +28,58 @@ test("seller can delete own chat without a provider key or approved registration
   assert.ok(statements.some(x=>x.sql.includes("DELETE FROM coach_messages") && x.args[0]==="12345"));
   assert.ok(statements.some(x=>x.sql.includes("DELETE FROM coach_sessions") && x.args[0]==="12345"));
 });
+
+test("approved seller can continue coaching with an unprefixed product answer only in Preview", async () => {
+  const { coachMessage } = await import("../coach_hooshi.js");
+  const oldFetch = globalThis.fetch;
+  const requests = [];
+  const statements = [];
+  globalThis.fetch = async (_url,options) => {
+    const body=JSON.parse(options.body);
+    requests.push(body);
+    return {ok:true,async json(){return {choices:[{message:{content:"برای سرویس قابلمه، ابتدا نیاز مشتری را مشخص کن."}}]}}};
+  };
+  const DB={
+    prepare(sql){
+      return {
+        sql, args:[],
+        bind(...args){this.args=args;return this;},
+        async run(){statements.push({sql,args:this.args});return {success:true};},
+        async first(){
+          if (sql.includes("RETURNING requests")) return {requests:1};
+          return null;
+        },
+        async all(){
+          if (sql.includes("SELECT role,content FROM coach_messages")) return {
+            results:[{role:"assistant",content:"امروز روی کدام گروه کالا تمرکز می‌کنی؟"}]
+          };
+          return {results:[]};
+        }
+      };
+    },
+    async batch(items){
+      for (const item of items) await item.run();
+      return [];
+    }
+  };
+  const seller={seller_key:"sample:person",store:"شعبه آزمایشی",mehr_m:100,aban_m:150,days_elapsed:30};
+  try{
+    const msg={from:{id:122333},chat:{id:122333,type:"private"},text:"سرویس‌های قابلمه"};
+    const answer=await coachMessage({
+      DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"mock-key"
+    },msg,async()=>seller);
+    assert.match(answer,/سرویس قابلمه/);
+    assert.equal(requests.length,1);
+    const turns=requests[0].messages;
+    assert.equal(turns.at(-1).content,"سرویس‌های قابلمه");
+    assert.match(turns.at(-2).content,/کدام گروه کالا/);
+    assert.ok(statements.some(x=>x.sql.includes("INSERT INTO coach_messages") && x.args.includes("سرویس‌های قابلمه")));
+    const ignored=await coachMessage({DB,HOOSHI_API_KEY:"mock-key"},msg,async()=>seller);
+    assert.equal(ignored,null,"Production must never route arbitrary personal messages");
+    const group=await coachMessage({DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"mock-key"},
+      {...msg,chat:{id:-123,type:"group"}},async()=>seller);
+    assert.match(group,/فقط در گفت‌وگوی خصوصی/);
+  } finally{
+    globalThis.fetch=oldFetch;
+  }
+});
