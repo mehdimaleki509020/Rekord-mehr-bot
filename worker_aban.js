@@ -429,7 +429,8 @@ async function hook(request, env) {
     const permitted = text === "شناسه من" || text === "/start" ||
       text === "شروع" || text === "مربی من" || text === "پاکسازی مربی" ||
       /^مربی(?:\s+|[،,:]\s*)/u.test(text) ||
-      /^ت[اأ]یید مربی\s+/u.test(text);
+      /^ت[اأ]یید مربی\s+/u.test(text) ||
+      (message.chat?.type === "private" && Boolean(text) && !text.startsWith("/"));
     if (!permitted) {
       if (message.chat?.type === "private")
         await send(env, chat, "این بازو فقط برای پایلوت مربی هوشمند است. بنویسید: مربی من");
@@ -457,7 +458,10 @@ async function hook(request, env) {
     ));
     return new Response("OK");
   }
-  if (text === "مربی من" || text === "پاکسازی مربی" || /^مربی(?:\s+|[،,:]\s*)/u.test(text)) {
+  if (text === "مربی من" || text === "پاکسازی مربی" ||
+      /^مربی(?:\s+|[،,:]\s*)/u.test(text) ||
+      (env.COACH_PILOT_PREVIEW === "yes" && message.chat?.type === "private" &&
+        Boolean(text) && !text.startsWith("/"))) {
     if (env.COACH_ENABLED !== "true") {
       await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
     } else {
