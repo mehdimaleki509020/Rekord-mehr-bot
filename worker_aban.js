@@ -701,7 +701,8 @@ export default {
             preview: true,
             coach_enabled: env.COACH_ENABLED === "true",
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
-            test_token_present: Boolean(env.COACH_TEST_TOKEN)
+            test_token_present: Boolean(env.COACH_TEST_TOKEN),
+            full_coach_available: true
           });
         }
 
