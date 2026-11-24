@@ -136,6 +136,7 @@ gate, _ = call(BASE + "/setup")
 if gate != 404:
     sys.exit("::error::Unsafe legacy Bale /setup is reachable in Preview")
 ready_code, ready_bot = call(BASE + "/coach-bale-test-ready")
+print("Bale test bot Preview variables (booleans only):", json.dumps(ready_bot,ensure_ascii=False))
 if ready_code != 200 or not ready_bot.get("isolated_preview"):
     sys.exit("::error::Isolated Bale test readiness endpoint missing")
 bot_req = urllib.request.Request(BASE + "/coach-bale-test-page",
