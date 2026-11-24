@@ -4,7 +4,7 @@ const MODEL = "openai/gpt-6-luna";
 const ENDPOINT = "https://api.hooshi.ai/v1/chat/completions";
 const LIMIT = 12;
 const MAX_CHARS = 1200;
-const MAX_DAILY = 12;
+const MAX_DAILY = 60; // Pilot: successful answers only
 const today = () => new Date().toISOString().slice(0,10);
 
 async function ensureCoachChatTables(env) {
@@ -52,7 +52,9 @@ export async function coachMessage(env, message, getSeller) {
   await env.DB.prepare("INSERT OR IGNORE INTO coach_sessions(user_id,day,requests) VALUES(?,?,0)").bind(userId,today()).run();
   await env.DB.prepare("UPDATE coach_sessions SET requests=0,day=? WHERE user_id=? AND day<>?").bind(today(),userId,today()).run();
   const reserved = await env.DB.prepare("UPDATE coach_sessions SET requests=requests+1 WHERE user_id=? AND requests<? RETURNING requests").bind(userId,MAX_DAILY).first();
-  if (!reserved) return "سقف آزمایشی ۱۲ پاسخ روزانه تکمیل شده است. فردا دوباره امتحان کنید.";
+  if (!reserved) return "سقف آزمایشی ۶۰ پاسخ موفق روزانه تکمیل شده است. فردا دوباره امتحان کنید.";
+  let delivered = false;
+  try {
   const history = (await env.DB.prepare("SELECT role,content FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT ?").bind(userId,LIMIT).all()).results.reverse();
   const target = Math.max(500,1.2*Number(seller.mehr_m||0));
   const categoryContext = await coachCategoryContext(env, seller.seller_key);
@@ -121,8 +123,19 @@ export async function coachMessage(env, message, getSeller) {
       env.DB.prepare("INSERT INTO coach_messages(user_id,role,content) VALUES(?,'assistant',?)").bind(userId,answer),
       env.DB.prepare("DELETE FROM coach_messages WHERE user_id=? AND id NOT IN (SELECT id FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT 24)").bind(userId,userId)
     ]);
+    delivered = true;
     return answer;
   } catch(err) {console.log("Coach request failed",String(err?.name||"error"));return "پاسخ مربی در حال حاضر در دسترس نیست. دوباره تلاش کنید.";}
+  } finally {
+    // Only successfully returned answers consume the user's quota.
+    if (!delivered) {
+      try {
+        await env.DB.prepare(
+          "UPDATE coach_sessions SET requests=MAX(0,requests-1) WHERE user_id=? AND day=?"
+        ).bind(userId,today()).run();
+      } catch(error) {console.log("Coach quota refund failed",String(error?.name||"error"));}
+    }
+  }
 }
 
 /** Preview-only isolated AI smoke test: no Bale token, no real seller data, no D1 writes. */
