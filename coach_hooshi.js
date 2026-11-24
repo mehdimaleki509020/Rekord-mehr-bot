@@ -1,3 +1,4 @@
+import { kbContext, kbCategory } from "./coach_knowledge.js";
 import { coachCategoryContext } from "./coach_metrics.js";
 // Hooshi pilot coach: private chats only, opt-in, bounded context and output.
 const MODEL = "openai/gpt-6-luna";
@@ -58,6 +59,8 @@ export async function coachMessage(env, message, getSeller) {
   const history = (await env.DB.prepare("SELECT role,content FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT ?").bind(userId,LIMIT).all()).results.reverse();
   const target = Math.max(500,1.2*Number(seller.mehr_m||0));
   const categoryContext = await coachCategoryContext(env, seller.seller_key);
+  const managementContext = env.COACH_PILOT_PREVIEW === "yes" ?
+    await kbContext(env,{store_key:seller.store_key||"",category_code:kbCategory(question)}) : "";
   const system = [
     "تو مربی حرفه‌ای فروش گروه کالای غیربرقی شبکه انتخاب من هستی. فارسی روان، کوتاه و محترمانه پاسخ بده.",
     "در هر پاسخ حداکثر یک تمرین مشخص و یک سؤال پیگیری بده؛ فروش غیرصادقانه یا فشار به مشتری را توصیه نکن.",
@@ -65,6 +68,8 @@ export async function coachMessage(env, message, getSeller) {
     "در صورت سؤال درباره نام کالا، از رده‌بندی واقعی داده‌ها استفاده کن؛ از نام یک محصول، فروش، موجودی یا ضعف واقعی آن محصول را حدس نزن.",
     "فقط از اعداد تأییدشده استفاده کن. موجودی، پاخور، فاکتورها، تارگت گروهی و علت افت در دسترس نیست مگر صریحاً در داده‌ها آمده باشد. درباره آن‌ها عددسازی نکن.",
     categoryContext,
+    "فقط قواعد تاییدشده و متن مجاز مدیر را لحاظ کن. یادداشت محرمانه، متن پیش‌نویس و محتوای لغوشده قابل استفاده یا افشا نیست.",
+    managementContext,
     "اطلاعات محرمانه دیگر فروشندگان را فاش نکن. داده‌های گزارش مربوط به آبان است و ممکن است قدیمی باشد.",
     "هیچ رقم فروش فردی را «فروش فروشگاه» یا «فروش شعبه» معرفی نکن؛ جمع فروش فروشگاه اصلاً به تو داده نشده است. برای گروه‌ها نیز فقط فروش همین فروشنده در دوره مشخص ارائه شده، نه سایر فروشندگان.",
     "داده‌های گروه‌های کالایی مربوط به روزهای ۱ و ۲ آبان و آذر ۱۴۰۵ هستند؛ آن‌ها را فروش کل ماه یا فروش زیرگروه خاصی مانند سرویس قابلمه معرفی نکن.",
