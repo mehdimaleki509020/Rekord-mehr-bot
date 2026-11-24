@@ -128,7 +128,7 @@ test("reasoning budget exhaustion retries once without leaking seller data to lo
   } finally{globalThis.fetch=oldFetch;console.log=oldLog;}
 });
 
-test("empty non-length completion does not retry or write misleading chat history",async()=>{
+test("empty non-length completion retries only once and never writes misleading chat history",async()=>{
   const { coachMessage }=await import("../coach_hooshi.js");
   const oldFetch=globalThis.fetch,oldLog=console.log;
   const logs=[],writes=[],calls=[];
@@ -149,7 +149,7 @@ test("empty non-length completion does not retry or write misleading chat histor
       {from:{id:123},chat:{id:123,type:"private"},text:"برنج"},
       async()=>({seller_key:"example:person",store:"شعبه فرضی",mehr_m:120,aban_m:140,days_elapsed:30}));
     assert.match(result,/پاسخ هوشی در این نوبت کامل نشد/);
-    assert.equal(calls.length,1);
+    assert.equal(calls.length,2);
     assert.ok(!writes.some(x=>x.includes("INSERT INTO coach_messages")));
   } finally{globalThis.fetch=oldFetch;console.log=oldLog;}
 });
