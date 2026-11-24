@@ -2,6 +2,7 @@ import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
 import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
 import { verifiedCoachSeller, approveCoachSeller } from "./coach_access.js";
 import { ensureCoachMetricsTable } from "./coach_metrics.js";
+import { importCoachBatch, coachImportPage, coachImportMaxBytes } from "./coach_import.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -731,6 +732,48 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      // Private data import is confined to isolated Preview D1 and requires a secret.
+      if (url.pathname === "/coach-import-page" ||
+          url.pathname === "/coach-import-batch" ||
+          url.pathname === "/coach-import-status") {
+        if (env.COACH_PILOT_PREVIEW !== "yes" || env.COACH_ENABLED !== "true")
+          return json({ok:false,error:"not_found"},404);
+        if (request.method === "GET" && url.pathname === "/coach-import-page") {
+          return new Response(coachImportPage(),{
+            headers: {
+              "content-type":"text/html; charset=utf-8",
+              "cache-control":"no-store",
+              "x-content-type-options":"nosniff",
+              "content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"
+            }
+          });
+        }
+        if (!env.COACH_TEST_TOKEN ||
+            request.headers.get("x-coach-test-token") !== env.COACH_TEST_TOKEN)
+          return json({ok:false,error:"unauthorized"},401);
+        await init(env);
+        await ensureCoachMetricsTable(env);
+        if (request.method === "GET" && url.pathname === "/coach-import-status") {
+          const [p,m] = await env.DB.batch([
+            env.DB.prepare("SELECT COUNT(*) AS n FROM aban_people WHERE report_id=-9003"),
+            env.DB.prepare("SELECT COUNT(*) AS n FROM coach_group_sales WHERE source_ref=?")
+              .bind("14050903.xlsb:PH11-PH21:day1-2:taxincluded")
+          ]);
+          return json({ok:true,profiles:Number(p.results?.[0]?.n||0),
+            metrics:Number(m.results?.[0]?.n||0),period_through_day:2});
+        }
+        if (request.method === "POST" && url.pathname === "/coach-import-batch") {
+          const input = await request.text();
+          if (input.length>coachImportMaxBytes) return json({ok:false,error:"too_large"},413);
+          let parsed;
+          try { parsed=JSON.parse(input); } catch(_) {
+            return json({ok:false,error:"invalid_json"},400);
+          }
+          const result=await importCoachBatch(env,parsed?.kind,parsed?.rows);
+          return json(result,result.ok?200:400);
+        }
+        return json({ok:false,error:"method_not_allowed"},405);
+      }
       // Preview-only diagnostics: expose configuration state, never secret values.
       if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
