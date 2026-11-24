@@ -1,4 +1,9 @@
+import { balePilotSetupPage } from "./coach_bale_setup.js";
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
+import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
+import { verifiedCoachSeller, approveCoachSeller } from "./coach_access.js";
+import { ensureCoachMetricsTable } from "./coach_metrics.js";
+import { importCoachBatch, coachImportPage, coachImportMaxBytes } from "./coach_import.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -25,7 +30,9 @@ const nameKey = (value) => {
   }
   return key(value);
 };
-const token = (env) => env.BALE_TOKEN || env.BALE_BOT_TOKEN || env.BOT_TOKEN || "";
+const token = (env) => env.COACH_PILOT_PREVIEW === "yes"
+  ? String(env.BALE_TEST_BOT_TOKEN || "")
+  : (env.BALE_TOKEN || env.BALE_BOT_TOKEN || env.BOT_TOKEN || "");
 export async function secretWebhookPath(env) {
   if (!token(env)) throw Error("BALE TOKEN NOT FOUND");
   // Bale does not provide a documented signed-update header. A long,
@@ -54,7 +61,13 @@ async function bale(env, method, payload) {
   if (!response.ok || data.ok === false) throw Error("Bale " + method + ": " + (data.description || response.status));
   return data;
 }
-const send = (env, chat, text) => chat ? bale(env, "sendMessage", { chat_id: chat, text }) : Promise.resolve();
+const send = (env, chat, text) => {
+  // Injectable transport exists only in the Preview CI's internal synthetic request.
+  // Never sends a real Bale message or requires BALE_TOKEN during the test.
+  if (env.COACH_PILOT_PREVIEW === "yes" && typeof env.__coachTestSend === "function")
+    return env.__coachTestSend(chat, String(text));
+  return chat ? bale(env, "sendMessage", { chat_id: chat, text }) : Promise.resolve();
+};
 
 // GitHub cron is best-effort and may run hours late. When a fine-grained
 // Actions:write token is configured as a Worker secret, dispatch immediately.
@@ -283,6 +296,16 @@ async function supervisorOf(env, userId) {
 }
 
 async function admin(env, user, claim = false) {
+  if (env.COACH_PILOT_PREVIEW === "yes") {
+    // Never inherit Production administrators or allow first-message admin claims.
+    if (typeof env.__coachTestSend === "function") {
+      const row = await env.DB.prepare("SELECT 1 AS x FROM admins WHERE user_id=?")
+        .bind(String(user.id)).first();
+      return Boolean(row);
+    }
+    return Boolean(env.COACH_PILOT_ADMIN_ID) &&
+      String(env.COACH_PILOT_ADMIN_ID) === String(user.id);
+  }
   const ids = String(env.ADMIN_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   if (ids.includes(String(user.id))) return true;
   if (await env.DB.prepare("SELECT 1 AS x FROM admins WHERE user_id=?").bind(String(user.id)).first()) return true;
@@ -313,6 +336,32 @@ async function register(env, userId, input) {
   await env.DB.prepare("INSERT OR REPLACE INTO aban_links(user_id,seller_key) VALUES(?,?)")
     .bind(String(userId), person.seller_key).run();
   return sellerMessage(person);
+}
+
+async function approveCoachCommand(env, user, message, input) {
+  // Approval MUST be linked to the actual Bale account by replying to that person's message.
+  // Self-service registrations by display name are not trusted for personalized coaching.
+  if (!(await admin(env, user))) return "⛔ فقط مدیر طرح مجاز به تأیید مربی است.";
+  const target = message.reply_to_message?.from;
+  if (!target?.id || target.is_bot) return "برای تأیید، روی پیام همان فروشنده Reply کنید و بنویسید: تایید مربی نام کامل | نام شعبه";
+  const parts = input.split("|").map(x=>x.trim());
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return "فرمت دستور: تایید مربی نام کامل | نام شعبه";
+  }
+  const sellerName = nameKey(parts[0]);
+  const storeName = key(parts[1]);
+  // Match the full name exactly after Persian character normalization.
+  const person = (await env.DB.prepare(
+    "SELECT seller_key,seller_name,store FROM aban_people WHERE store_key=?"
+  ).bind(storeName).all()).results.filter(p=>nameKey(p.seller_name)===sellerName);
+  if (person.length !== 1) return "فروشنده دقیقاً در گزارش این شعبه پیدا نشد؛ نام کامل و شعبه را بررسی کنید.";
+  const result = await approveCoachSeller(env, target.id, person[0].seller_key, user.id);
+  if (!result.ok) return result.error === "already_assigned" ?
+    "این حساب قبلاً به فروشنده دیگری متصل شده است؛ تغییر آن نیاز به بررسی مدیر دارد." :
+    result.error === "seller_already_assigned" ?
+    "این فروشنده قبلاً برای حساب دیگری تأیید شده است؛ درخواست بررسی کنید." :
+    "تأیید انجام نشد. اطلاعات را بررسی کنید.";
+  return "✅ دسترسی مربی برای حساب فروشنده تأیید شد. در گفت‌وگوی خصوصی ربات بنویسد: مربی من";
 }
 
 async function assignSupervisor(env, user, message, storeName) {
@@ -360,6 +409,7 @@ async function hook(request, env) {
   const update = await request.json();
   const message = update.message;
   if (!message) return new Response("OK");
+  if (message.document && env.COACH_PILOT_PREVIEW === "yes") return new Response("OK");
   if (message.document) {
     await upload(env, message);
     return new Response("OK");
@@ -367,9 +417,47 @@ async function hook(request, env) {
   const chat = message.chat?.id;
   const user = message.from || {};
   const text = String(message.text || "").trim();
+
+  if (env.COACH_PILOT_PREVIEW === "yes") {
+    const permitted = text === "شناسه من" || text === "/start" ||
+      text === "شروع" || text === "مربی من" || text === "پاکسازی مربی" ||
+      /^مربی(?:\s+|[،,:]\s*)/u.test(text) ||
+      /^ت[اأ]یید مربی\s+/u.test(text);
+    if (!permitted) {
+      if (message.chat?.type === "private")
+        await send(env, chat, "این بازو فقط برای پایلوت مربی هوشمند است. بنویسید: مربی من");
+      return new Response("OK");
+    }
+    if (text === "/start" || text === "شروع") {
+      if (message.chat?.type === "private")
+        await send(env,chat,"مربی آزمایشی غیربرقی. برای شناسایی حساب بنویسید: شناسه من. پس از تأیید مدیر، بنویسید: مربی من.");
+      return new Response("OK");
+    }
+  }
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
+  if (env.COACH_PILOT_PREVIEW === "yes" && text === "شناسه من") {
+    if (message.chat?.type === "private")
+      await send(env, chat, "شناسه حساب بله شما: " + String(user.id || "نامشخص") +
+        "\\nاین شناسه را فقط به مدیر پایلوت بدهید.");
+    return new Response("OK");
+  }
+
+  if (/^تایید مربی\s+/u.test(text) || /^تأیید مربی\s+/u.test(text)) {
+    await send(env, chat, await approveCoachCommand(
+      env, user, message, text.replace(/^ت[اأ]یید مربی\s+/u, "")
+    ));
+    return new Response("OK");
+  }
+  if (text === "مربی من" || text === "پاکسازی مربی" || /^مربی(?:\s+|[،,:]\s*)/u.test(text)) {
+    if (env.COACH_ENABLED !== "true") {
+      await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
+    } else {
+      await send(env, chat, await coachMessage(env, message, verifiedCoachSeller));
+    }
+    return new Response("OK");
+  }
   if (text === "/start" || text === "شروع" || text === "وضعیت من") {
     if (sup) await send(env, chat, await branchStatus(env, sup.store));
     else if (isAdmin) await send(env, chat, [
@@ -486,6 +574,37 @@ async function authorize(request) {
       { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     return await crypto.subtle.verify({ name: "RSASSA-PKCS1-v1_5" },
       cryptoKey, decode64(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]));
+  } catch { return false; }
+}
+
+// Dedicated GitHub Actions OIDC authentication for preview-only AI smoke tests.
+// Distinct audience and PR/workflow claims prevent reuse of production processor tokens.
+async function authorizeCoachCI(request) {
+  const bearer = request.headers.get("authorization") || "";
+  if (!bearer.startsWith("Bearer ")) return false;
+  const parts = bearer.slice(7).split(".");
+  if (parts.length !== 3) return false;
+  let header, claims;
+  try { header = decode(parts[0]); claims = decode(parts[1]); } catch { return false; }
+  const now = Math.floor(Date.now() / 1000);
+  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (header.alg !== "RS256" || claims.iss !== ISS ||
+      !audiences.includes("rekord-mehr-bot-coach-preview") ||
+      claims.repository !== REPO ||
+      String(claims.repository_id) !== "1381436999" ||
+      String(claims.actor_id) !== "332474987" ||
+      claims.event_name !== "pull_request" ||
+      claims.ref !== "refs/pull/4/merge" ||
+      claims.workflow_ref !== REPO + "/.github/workflows/coach-check.yml@refs/pull/4/merge" ||
+      !claims.exp || claims.exp < now || (claims.nbf && claims.nbf > now) ||
+      (claims.iat && claims.iat > now + 60)) return false;
+  const jwk = (await signingKeys()).find(value => value.kid === header.kid);
+  if (!jwk) return false;
+  try {
+    const key = await crypto.subtle.importKey("jwk", jwk,
+      {name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"}, false, ["verify"]);
+    return await crypto.subtle.verify({name:"RSASSA-PKCS1-v1_5"},
+      key, decode64(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]));
   } catch { return false; }
 }
 
@@ -651,6 +770,277 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      // Never allow the operational bot's /setup or /debug paths to run in Preview.
+      // A Preview must use its OWN BALE_TEST_BOT_TOKEN, never a Production token.
+      if (env.COACH_PILOT_PREVIEW === "yes" &&
+          (url.pathname === "/setup" || url.pathname === "/debug" || url.pathname.startsWith("/processor/"))) {
+        return json({ok:false,error:"not_found"},404);
+      }
+      if (request.method === "GET" && url.pathname === "/coach-bale-test-page") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        return new Response(balePilotSetupPage(),{
+          headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store",
+            "x-content-type-options":"nosniff",
+            "content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"}
+        });
+      }
+      if (url.pathname === "/coach-bale-test-ready") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        return json({ok:true,isolated_preview:true,
+          test_bot_token_present:Boolean(env.BALE_TEST_BOT_TOKEN),
+          expected_bot_username_present:Boolean(env.COACH_TEST_BOT_USERNAME),
+          test_password_present:Boolean(env.COACH_TEST_TOKEN)});
+      }
+      if (url.pathname === "/coach-bale-test-setup") {
+        if (env.COACH_PILOT_PREVIEW !== "yes" || request.method !== "POST")
+          return json({ok:false,error:"not_found"},404);
+        if (!env.COACH_TEST_TOKEN ||
+          request.headers.get("x-coach-test-token")?.trim() !== String(env.COACH_TEST_TOKEN).trim())
+          return json({ok:false,error:"unauthorized"},401);
+        if (!env.BALE_TEST_BOT_TOKEN || !env.COACH_TEST_BOT_USERNAME)
+          return json({ok:false,error:"test_bot_not_configured"},503);
+        // Identity check prevents using the Production bot by accident.
+        const who = await bale(env,"getMe");
+        const actual = String(who?.result?.username || "").replace(/^@/,"").toLowerCase();
+        const expected = String(env.COACH_TEST_BOT_USERNAME).replace(/^@/,"").trim().toLowerCase();
+        if (!actual || !expected || actual !== expected)
+          return json({ok:false,error:"test_bot_identity_mismatch"},409);
+        const configured = await bale(env,"getWebhookInfo");
+        const oldUrl = String(configured?.result?.url || "");
+        const destination = url.origin + await secretWebhookPath(env);
+        // Refuse to move an existing webhook; a Production bot must never be hijacked.
+        if (oldUrl && oldUrl !== destination)
+          return json({ok:false,error:"existing_webhook_conflict"},409);
+        const saved = await bale(env,"setWebhook",{url:destination});
+        return json({ok:saved.ok !== false,webhook_configured:true,
+          username:actual,preview:true});
+      }
+      // Private data import is confined to isolated Preview D1 and requires a secret.
+      if (url.pathname === "/coach-import-page" ||
+          url.pathname === "/coach-import-batch" ||
+          url.pathname === "/coach-import-status") {
+        if (env.COACH_PILOT_PREVIEW !== "yes" || env.COACH_ENABLED !== "true")
+          return json({ok:false,error:"not_found"},404);
+        if (request.method === "GET" && url.pathname === "/coach-import-page") {
+          return new Response(coachImportPage(),{
+            headers: {
+              "content-type":"text/html; charset=utf-8",
+              "cache-control":"no-store",
+              "x-content-type-options":"nosniff",
+              "content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"
+            }
+          });
+        }
+        if (!env.COACH_TEST_TOKEN ||
+            request.headers.get("x-coach-test-token")?.trim() !== String(env.COACH_TEST_TOKEN).trim())
+          return json({ok:false,error:"unauthorized"},401);
+        await init(env);
+        await ensureCoachMetricsTable(env);
+        if (request.method === "GET" && url.pathname === "/coach-import-status") {
+          const [p,m] = await env.DB.batch([
+            env.DB.prepare("SELECT COUNT(*) AS n FROM aban_people WHERE report_id=-9003"),
+            env.DB.prepare("SELECT COUNT(*) AS n FROM coach_group_sales WHERE source_ref=?")
+              .bind("14050903.xlsb:PH11-PH21:day1-2:taxincluded")
+          ]);
+          return json({ok:true,profiles:Number(p.results?.[0]?.n||0),
+            metrics:Number(m.results?.[0]?.n||0),period_through_day:2});
+        }
+        if (request.method === "POST" && url.pathname === "/coach-import-batch") {
+          const input = await request.text();
+          if (input.length>coachImportMaxBytes) return json({ok:false,error:"too_large"},413);
+          let parsed;
+          try { parsed=JSON.parse(input); } catch(_) {
+            return json({ok:false,error:"invalid_json"},400);
+          }
+          const result=await importCoachBatch(env,parsed?.kind,parsed?.rows);
+          return json(result,result.ok?200:400);
+        }
+        return json({ok:false,error:"method_not_allowed"},405);
+      }
+      // Preview-only diagnostics: expose configuration state, never secret values.
+      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full" || url.pathname === "/coach-ci-import" || url.pathname === "/coach-ci-import-status") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
+
+        if (request.method === "GET" && url.pathname === "/coach-preview-ready") {
+          return json({
+            ok: true,
+            preview: true,
+            coach_enabled: env.COACH_ENABLED === "true",
+            hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
+            test_token_present: Boolean(env.COACH_TEST_TOKEN),
+            full_coach_available: true,
+            coach_release: "verified-real-data-import-2",
+            import_available: true
+          });
+        }
+
+        if (request.method === "GET" && url.pathname === "/coach-test") {
+          const html = `<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>آزمایش مربی هوشی</title><style>body{font:16px Tahoma,Arial,sans-serif;max-width:640px;margin:36px auto;padding:16px;line-height:2;color:#202124}input,button{font:inherit;padding:12px;border-radius:8px}input{width:90%;border:1px solid #aaa}button{margin-top:12px;cursor:pointer;background:#0656b1;color:white;border:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f4;padding:16px;border-radius:8px}small{color:#555}</style><h2>آزمایش مربی هوشی — فقط Preview</h2><p>این صفحه به ربات اصلی بله متصل نیست و فقط فروشنده فرضی را آزمایش می‌کند.</p><p id="ready">در حال بررسی تنظیمات...</p><label for="secret">رمز مستقل COACH_TEST_TOKEN</label><input id="secret" type="password" autocomplete="off" spellcheck="false"><button id="run" disabled>دریافت پاسخ آزمایشی هوشی</button><pre id="out" aria-live="polite">هنوز آزمایش اجرا نشده است.</pre><small>رمز در صفحه یا حافظه مرورگر ذخیره نمی‌شود. کلید API هوشی را اینجا وارد نکنید.</small><script>const ready=document.getElementById("ready"),btn=document.getElementById("run"),out=document.getElementById("out");(async()=>{try{const r=await fetch("/coach-preview-ready",{cache:"no-store"}),j=await r.json();const parts=[["مربی فعال",j.coach_enabled],["کلید هوشی ثبت شده",j.hooshi_key_present],["رمز تست ثبت شده",j.test_token_present]];ready.textContent=parts.map(x=>(x[1]?"✅ ":"❌ ")+x[0]).join(" | ");btn.disabled=!parts.every(x=>x[1])}catch(e){ready.textContent="خطا در بررسی تنظیمات"}})();btn.onclick=async()=>{const inp=document.getElementById("secret"),secret=inp.value;inp.value="";if(!secret){out.textContent="رمز تست را وارد کنید.";return}btn.disabled=true;out.textContent="در حال دریافت پاسخ از هوشی...";try{const r=await fetch("/coach-preview-test",{method:"POST",headers:{"x-coach-test-token":secret}});const j=await r.json();const reasons={invalid_test_token:"رمز تست صحیح نیست.",test_token_missing:"رمز تست در Preview موجود نیست.",hooshi_key_missing:"کلید هوشی در Preview موجود نیست.",coach_disabled:"مربی در Preview غیرفعال است.",timeout:"زمان پاسخ هوشی بیش از حد طولانی شد.",provider_network_error:"ارتباط Cloudflare با هوشی برقرار نشد.",empty_provider_response:"هوشی پاسخ متنی نداد."};out.textContent=j.ok?j.answer:("خطا: "+(reasons[j.error]||j.error||r.status))}catch(e){out.textContent="خطای ارتباط با سرور آزمایشی."}finally{btn.disabled=false}}</script></html>`;
+          return new Response(html,{headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff","content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"}});
+        }
+
+        // CI endpoint validates signed GitHub OIDC claims; no shared secret in Actions.
+        // Manager can verify upload progress from GitHub CI without sharing the test secret.
+        if (url.pathname === "/coach-ci-import-status") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          await init(env);
+          await ensureCoachMetricsTable(env);
+          const [profiles,metrics] = await env.DB.batch([
+            env.DB.prepare("SELECT COUNT(*) AS n FROM aban_people WHERE report_id=-9003"),
+            env.DB.prepare("SELECT COUNT(*) AS n FROM coach_group_sales WHERE source_ref=?")
+              .bind("14050903.xlsb:PH11-PH21:day1-2:taxincluded")
+          ]);
+          return json({ok:true,source:"14050903.xlsb",profiles:Number(profiles.results?.[0]?.n||0),
+            metrics:Number(metrics.results?.[0]?.n||0),through_day:2});
+        }
+        if (url.pathname === "/coach-ci-import") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          await init(env);
+          await ensureCoachMetricsTable(env);
+          const sellerKey="ci-import:"+crypto.randomUUID();
+          const profile={
+            seller_key:sellerKey,store_key:"ci-import",store:"شعبه ساختگی",
+            seller_name:"فروشنده ساختگی",mehr_m:400,aban_m:450,
+            days_elapsed:30,report_id:-9003
+          };
+          const row={
+            seller_key:sellerKey,period:"1405-09",through_day:2,
+            group_code:"cookware",sales_m:25,
+            source_ref:"14050903.xlsb:PH11-PH21:day1-2:taxincluded"
+          };
+          try {
+            const p=await importCoachBatch(env,"profiles",[profile]);
+            const g=await importCoachBatch(env,"metrics",[row]);
+            const read=await env.DB.prepare(
+              "SELECT sales_m FROM coach_group_sales WHERE seller_key=? AND period='1405-09' AND group_code='cookware'"
+            ).bind(sellerKey).first();
+            const ok=p.ok && g.ok && Number(read?.sales_m)===25;
+            return json({ok,profiles:p.accepted||0,metrics:g.accepted||0,
+              persisted:Boolean(read),scenario:"synthetic_preview_import"},ok?200:502);
+          } finally {
+            try {await env.DB.prepare("DELETE FROM coach_group_sales WHERE seller_key=?").bind(sellerKey).run();}catch(_){}
+            try {await env.DB.prepare("DELETE FROM aban_people WHERE seller_key=?").bind(sellerKey).run();}catch(_){}
+          }
+        }
+        if (url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          if (env.COACH_ENABLED !== "true") return json({ok:false,error:"coach_disabled"},503);
+          if (!env.HOOSHI_API_KEY) return json({ok:false,error:"hooshi_key_missing"},503);
+          if (url.pathname === "/coach-ci-smoke") {
+            const result = await coachPreviewSmoke(env);
+            return json(result,result.ok?200:502);
+          }
+          // Real webhook-shaped Bale messages, with a mock outbound transport and
+          // a one-time fake seller. No Bale API key, production D1, or real seller involved.
+          const number = String(crypto.getRandomValues(new Uint32Array(1))[0] % 900000000 + 100000000);
+          const userId = "81" + number;
+          const outsiderId = "82" + number;
+          const adminId = "83" + number;
+          const marker = crypto.randomUUID().slice(0, 8);
+          const sellerName = "فروشنده فرضی " + marker;
+          const storeName = "شعبه آزمایشی " + marker;
+          const storeKey = key(storeName);
+          const sellerKey = "coachci:" + crypto.randomUUID();
+          const sent = [];
+          const fakeEnv = Object.assign(Object.create(env), {
+            __coachTestSend: async (chat, text) => { sent.push({chat, text}); }
+          });
+          const runBale = async (msg) => hook(new Request("https://preview.invalid/fictional-webhook", {
+            method: "POST", headers: {"content-type":"application/json"},
+            body: JSON.stringify({message: msg})
+          }), fakeEnv);
+          const makeMessage = (fromId, text, type = "private") => ({
+            from: {id: fromId},
+            chat: {id: type === "private" ? fromId : "-123456", type},
+            text
+          });
+          let approvalOk = false, unapprovedBlocked = false, privateOnly = false;
+          let answer = "", storedMessages = 0;
+          try {
+            await env.DB.prepare(
+              "INSERT INTO aban_people(seller_key,store_key,store,seller_name,mehr_m,aban_m,days_elapsed,report_id) VALUES(?,?,?,?,400,450,30,-1)"
+            ).bind(sellerKey,storeKey,storeName,sellerName).run();
+            await env.DB.prepare(
+              "INSERT INTO admins(user_id,first_name,username) VALUES(?,?,?)"
+            ).bind(adminId,"مدیر آزمایش","coach_ci_admin").run();
+            await ensureCoachMetricsTable(env);
+            const fakeGroupRows = [
+              ["1405-08",3,"cookware",120],
+              ["1405-09",3,"cookware",80],
+              ["1405-08",3,"tableware",30],
+              ["1405-09",3,"tableware",45],
+            ];
+            for (const [period,day,group,sales] of fakeGroupRows) {
+              await env.DB.prepare(
+                "INSERT INTO coach_group_sales(seller_key,period,through_day,group_code,sales_m,source_ref) VALUES(?,?,?,?,?,?)"
+              ).bind(sellerKey,period,day,group,sales,"ci-fictitious-only").run();
+            }
+            // The outsider self-registers a known name, but that is not coach authorization.
+            await env.DB.prepare(
+              "INSERT INTO aban_links(user_id,seller_key) VALUES(?,?)"
+            ).bind(outsiderId,sellerKey).run();
+            sent.length = 0;
+            await runBale(makeMessage(outsiderId,"مربی من"));
+            unapprovedBlocked = sent.length === 1 &&
+              sent[0].text.includes("تأیید نشده") &&
+              !sent[0].text.includes("۴۵۰");
+            sent.length = 0;
+            const adminMsg = makeMessage(adminId,
+              "تایید مربی " + sellerName + " | " + storeName, "group");
+            adminMsg.reply_to_message = {from:{id:userId}};
+            await runBale(adminMsg);
+            const seller = await verifiedCoachSeller(env,userId);
+            approvalOk = seller?.seller_key === sellerKey &&
+              sent.some(x=>x.text.includes("✅ دسترسی مربی"));
+            sent.length = 0;
+            await runBale(makeMessage(userId,"مربی من", "group"));
+            privateOnly = sent.length === 1 &&
+              sent[0].text.includes("فقط در گفت‌وگوی خصوصی") &&
+              !sent[0].text.includes("۴۵۰");
+            sent.length = 0;
+            await runBale(makeMessage(userId,
+              "مربی، فروش گروه پخت‌وپز من در آذر نسبت به آبان چه تغییری کرده؟ یک تمرین کاربردی پیشنهاد کن."));
+            answer = sent[0]?.text || "";
+            const row = await env.DB.prepare(
+              "SELECT COUNT(*) AS n FROM coach_messages WHERE user_id=?"
+            ).bind(userId).first();
+            storedMessages = Number(row?.n || 0);
+            const ok = approvalOk && unapprovedBlocked && privateOnly &&
+              storedMessages === 2 && Boolean(answer) && /پخت.?و.?پز|قابلمه/.test(answer) &&
+              !/در حال حاضر در دسترس نیست|موقتاً برقرار نیست|سقف آزمایشی/.test(answer);
+            return json({ok,approvalOk,unapprovedBlocked,privateOnly,
+              storedMessages,answer:answer.slice(0,1500),
+              scenario:"fictional_bale_webhook_verified_seller_d1"}, ok?200:502);
+          } finally {
+            // Clean only this run's fake rows; avoid modifying any genuine seller.
+            const deletes = [
+              ["coach_messages","user_id",userId],
+              ["coach_sessions","user_id",userId],
+              ["coach_verified_links","user_id",userId],
+              ["coach_group_sales","seller_key",sellerKey],
+              ["aban_links","user_id",outsiderId],
+              ["admins","user_id",adminId],
+              ["aban_people","seller_key",sellerKey],
+            ];
+            for (const [table,field,value] of deletes) {
+              try { await env.DB.prepare("DELETE FROM "+table+" WHERE "+field+"=?").bind(value).run(); }
+              catch (_) {}
+            }
+          }
+        }
+        if (url.pathname === "/coach-preview-test") {
+          if (request.method !== "POST") return json({ ok:false, error:"method_not_allowed" },405);
+          if (env.COACH_ENABLED !== "true") return json({ok:false,error:"coach_disabled"},503);
+          if (!env.COACH_TEST_TOKEN) return json({ok:false,error:"test_token_missing"},503);
+          if (request.headers.get("x-coach-test-token") !== env.COACH_TEST_TOKEN) return json({ok:false,error:"invalid_test_token"},401);
+          if (!env.HOOSHI_API_KEY) return json({ok:false,error:"hooshi_key_missing"},503);
+          const result = await coachPreviewSmoke(env);
+          return json(result,result.ok?200:502);
+        }
+      }
       await init(env);
       if (url.pathname.startsWith("/processor/")) return processor(request, env, url);
       if (request.method === "GET" && url.pathname === "/") {
