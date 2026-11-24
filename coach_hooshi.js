@@ -111,7 +111,9 @@ export async function coachMessage(env, message, getSeller) {
         reasoning_tokens:Number(result?.usage?.completion_tokens_details?.reasoning_tokens||0),
         attempt:attempt+1
       });
-      if (choice?.finish_reason !== "length") break;
+      // Retry a single time for transient empty 200 responses as well. Never
+      // retry a provider content-filter refusal.
+      if (choice?.finish_reason === "content_filter") break;
     }
     if (!answer) return "پاسخ هوشی در این نوبت کامل نشد. لطفاً سؤال را دوباره بفرستید.";
     await env.DB.batch([
