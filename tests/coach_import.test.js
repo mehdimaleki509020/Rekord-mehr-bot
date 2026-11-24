@@ -12,10 +12,10 @@ const metric={
   source_ref:"14050903.xlsb:PH11-PH21:day1-2:taxincluded"
 };
 function mockDB() {
-  const calls=[];
-  return {calls,prepare(sql){
+  const calls=[],batches=[];
+  return {calls,batches,prepare(sql){
     return {bind(...args){calls.push({sql,args});return this;}};
-  },async batch(items){return items.map(()=>({success:true}))}};
+  },async batch(items){batches.push(items);return items.map(()=>({success:true}))}};
 }
 test("preview importer rejects unknown group and incorrect day without side effects",async()=>{
  const DB=mockDB();
@@ -38,7 +38,7 @@ test("preview importer rejects duplicate keys, out-of-range amounts and oversize
  assert.equal((await importCoachBatch({DB},"profiles",[profile,profile])).ok,false);
  assert.equal((await importCoachBatch({DB},"metrics",[{...metric,sales_m:-5}])).ok,false);
  assert.equal((await importCoachBatch({DB},"metrics",Array(81).fill(metric))).ok,false);
- assert.equal(DB.calls.length,0);
+ assert.equal(DB.batches.length,0); // no SQL was executed
 });
 test("import form is local-file based and never embeds private sales",()=>{
  const html=coachImportPage();
