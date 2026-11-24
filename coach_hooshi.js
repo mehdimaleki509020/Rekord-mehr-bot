@@ -102,7 +102,7 @@ export async function coachMessage(env, message, getSeller) {
       const content = choice?.message?.content;
       answer = (typeof content === "string" ? content :
         Array.isArray(content) ? content.filter(x=>x?.type==="text" && typeof x.text==="string")
-          .map(x=>x.text).join("\\n") : "").trim().slice(0,3000);
+          .map(x=>x.text).join("\n") : "").trim().slice(0,3000);
       if (answer) break;
       // Log only provider metadata, never questions, responses or seller data.
       console.log("Hooshi empty completion",{
