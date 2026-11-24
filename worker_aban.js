@@ -775,7 +775,7 @@ export default {
         return json({ok:false,error:"method_not_allowed"},405);
       }
       // Preview-only diagnostics: expose configuration state, never secret values.
-      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full" || url.pathname === "/coach-ci-import") {
+      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full" || url.pathname === "/coach-ci-import" || url.pathname === "/coach-ci-import-status") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
 
         if (request.method === "GET" && url.pathname === "/coach-preview-ready") {
@@ -786,7 +786,7 @@ export default {
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
             test_token_present: Boolean(env.COACH_TEST_TOKEN),
             full_coach_available: true,
-            coach_release: "verified-real-data-import-1",
+            coach_release: "verified-real-data-import-2",
             import_available: true
           });
         }
@@ -797,6 +797,20 @@ export default {
         }
 
         // CI endpoint validates signed GitHub OIDC claims; no shared secret in Actions.
+        // Manager can verify upload progress from GitHub CI without sharing the test secret.
+        if (url.pathname === "/coach-ci-import-status") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          await init(env);
+          await ensureCoachMetricsTable(env);
+          const [profiles,metrics] = await env.DB.batch([
+            env.DB.prepare("SELECT COUNT(*) AS n FROM aban_people WHERE report_id=-9003"),
+            env.DB.prepare("SELECT COUNT(*) AS n FROM coach_group_sales WHERE source_ref=?")
+              .bind("14050903.xlsb:PH11-PH21:day1-2:taxincluded")
+          ]);
+          return json({ok:true,source:"14050903.xlsb",profiles:Number(profiles.results?.[0]?.n||0),
+            metrics:Number(metrics.results?.[0]?.n||0),through_day:2});
+        }
         if (url.pathname === "/coach-ci-import") {
           if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
           if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
