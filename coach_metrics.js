@@ -3,11 +3,17 @@
 // A trusted, separately-reviewed importer will populate this table later.
 export const CATEGORY_LABELS = Object.freeze({
   cookware:"پخت‌وپز",
-  tableware:"غذاخوری",
-  serving:"سرو و پذیرایی",
-  glassware:"بلور و شیشه",
-  organizers:"نظم‌دهنده",
-  other:"سایر گروه‌های غیربرقی",
+  tableware:"پذیرایی و سرو",
+  glassware:"کالای شیشه‌ای و کریستال",
+  kitchenware:"ظروف آشپزخانه",
+  bath_cleaning:"لوازم حمام و نظافت",
+  kitchen_tools:"ابزار آشپزی",
+  travel:"کالای سفری",
+  storage:"ظروف نگهداری و ذخیره‌سازی",
+  disposables:"ظروف یک‌بارمصرف",
+  serving:"سرو (زیرگروه تفکیکی)",
+  organizers:"نظم‌دهنده (زیرگروه تفکیکی)",
+  other:"سایر غیربرقی"
 });
 
 export async function ensureCoachMetricsTable(env) {
