@@ -90,3 +90,12 @@ ascii_digits = answer.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥�
 if "500" not in ascii_digits or "50" not in ascii_digits:
     print("::warning::Review target/difference reasoning: expected 500 million target and 50 million gap")
 print("::notice::Live provider connection succeeded using fictional seller only")
+# Also exercise the actual chat coach, D1 session/history, and synthetic data cleanup.
+full_code, full = call(BASE + "/coach-ci-full", method="POST",
+                       headers={"Authorization": "Bearer " + oidc}, data=b"{}")
+print("Full private-coach + D1 HTTP:", full_code)
+print("Full coach result (fictional only):", json.dumps(full, ensure_ascii=False)[:1700])
+if full_code != 200 or not full.get("ok") or full.get("storedMessages") != 2:
+    sys.exit("::error::Full coach with Preview D1 did not pass")
+print("::notice::Private coach + D1 conversation history passed with synthetic seller and cleanup")
+
