@@ -38,7 +38,8 @@ for attempt in range(24):
         code, result = call(BASE + "/coach-preview-ready")
         if (code == 200 and result.get("preview") is True and
                 result.get("full_coach_available") is True and
-                result.get("coach_release") == "azar-chat-retention-3"):
+                result.get("coach_release") == "verified-real-data-import-1" and
+                result.get("import_available") is True):
             ready = result
             break
         print(f"Preview probe {attempt + 1}: status={code}, result={str(result)[:350]}", flush=True)
@@ -103,3 +104,12 @@ if (full_code != 200 or not full.get("ok") or full.get("storedMessages") != 2
     sys.exit("::error::Full coach with Preview D1 did not pass")
 print("::notice::Fake Bale webhook, administrator approval, privacy gates and D1 chat passed")
 
+
+# Test the new D1 batch importer using only a fabricated single seller.
+imp_code, imp=call(BASE+"/coach-ci-import", method="POST",
+                   headers={"Authorization":"Bearer "+oidc},data=b"{}")
+print("Synthetic authenticated sales import HTTP:",imp_code)
+print("Synthetic import result:",json.dumps(imp,ensure_ascii=False))
+if imp_code!=200 or not imp.get("ok") or not imp.get("persisted"):
+    sys.exit("::error::Preview batch importer verification did not pass")
+print("::notice::Preview sales importer verified without uploading any real seller data")
