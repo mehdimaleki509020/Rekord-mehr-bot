@@ -38,7 +38,7 @@ for attempt in range(24):
         code, result = call(BASE + "/coach-preview-ready")
         if (code == 200 and result.get("preview") is True and
                 result.get("full_coach_available") is True and
-                result.get("coach_release") == "azar-coach-parser-2"):
+                result.get("coach_release") == "azar-chat-retention-3"):
             ready = result
             break
         print(f"Preview probe {attempt + 1}: status={code}, result={str(result)[:350]}", flush=True)
