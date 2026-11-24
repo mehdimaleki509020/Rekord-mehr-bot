@@ -804,6 +804,25 @@ export default {
           test_password_present:Boolean(env.COACH_TEST_TOKEN),
           sales_snapshot_ready:salesReady});
       }
+      if (request.method === "GET" && url.pathname === "/coach-bale-test-connection") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        if (!env.BALE_TEST_BOT_TOKEN || !env.COACH_TEST_BOT_USERNAME)
+          return json({ok:true,bot_configured:false,webhook_connected:false});
+        try {
+          const [who,info] = await Promise.all([
+            bale(env,"getMe"),bale(env,"getWebhookInfo")
+          ]);
+          const actual = String(who?.result?.username || "").replace(/^@/,"").toLowerCase();
+          const expected = String(env.COACH_TEST_BOT_USERNAME).replace(/^@/,"").trim().toLowerCase();
+          const expectedPath = new URL(request.url).origin + await secretWebhookPath(env);
+          return json({ok:true,bot_configured:actual === expected,
+            webhook_connected:actual === expected &&
+              String(info?.result?.url || "") === expectedPath,
+            pending_updates:Number(info?.result?.pending_update_count || 0)});
+        } catch (_) {
+          return json({ok:false,error:"bale_status_unavailable"},503);
+        }
+      }
       if (url.pathname === "/coach-bale-test-setup") {
         if (env.COACH_PILOT_PREVIEW !== "yes" || request.method !== "POST")
           return json({ok:false,error:"not_found"},404);
