@@ -83,3 +83,73 @@ test("approved seller can continue coaching with an unprefixed product answer on
     globalThis.fetch=oldFetch;
   }
 });
+
+test("reasoning budget exhaustion retries once without leaking seller data to logs", async () => {
+  const { coachMessage } = await import("../coach_hooshi.js");
+  const oldFetch=globalThis.fetch, oldLog=console.log;
+  const sent=[], logs=[], dbWrites=[];
+  globalThis.fetch=async (_,options)=>{
+    const request=JSON.parse(options.body);
+    sent.push(request);
+    return {ok:true,async json(){
+      if(sent.length===1) return {
+        choices:[{finish_reason:"length",message:{content:""}}],
+        usage:{completion_tokens:1200,completion_tokens_details:{reasoning_tokens:1200}}
+      };
+      return {choices:[{finish_reason:"stop",message:{content:"برای پخت برنج ابتدا ظرفیت مناسب قابلمه را با توجه به مقدار برنج بررسی کنید."}}]};
+    }};
+  };
+  console.log=(...args)=>logs.push(JSON.stringify(args));
+  const DB={
+    prepare(sql){
+      return {
+        args:[],bind(...args){this.args=args;return this;},
+        async run(){dbWrites.push({sql,args:this.args});return {success:true};},
+        async first(){return sql.includes("RETURNING requests")?{requests:1}:null;},
+        async all(){return {results:sql.includes("SELECT role,content FROM coach_messages")?
+          [{role:"assistant",content:"برای چه غذایی می‌خواهید قابلمه؟"}]:[]};}
+      };
+    },async batch(items){for(const stmt of items)await stmt.run();}
+  };
+  try{
+    const answer=await coachMessage({
+      DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"fake-secret"
+    },{from:{id:12345},chat:{id:12345,type:"private"},text:"برنج"},
+    async()=>({seller_key:"sample:person",store:"فروشگاه ساختگی",mehr_m:200,aban_m:220,days_elapsed:30}));
+    assert.match(answer,/پخت برنج/);
+    assert.equal(sent.length,2);
+    assert.equal(sent[0].max_tokens,1200);
+    assert.equal(sent[1].max_tokens,1800);
+    assert.equal(sent[1].messages.at(-1).content,"برنج");
+    assert.match(sent[1].messages.at(-2).content,/چه غذایی/);
+    assert.ok(dbWrites.some(x=>x.sql.includes("INSERT INTO coach_messages")&&x.args.includes("برنج")));
+    assert.ok(logs.some(x=>x.includes("Hooshi empty completion")));
+    assert.ok(logs.every(x=>!x.includes("فروشگاه ساختگی")&&!x.includes("fake-secret")));
+  } finally{globalThis.fetch=oldFetch;console.log=oldLog;}
+});
+
+test("empty non-length completion does not retry or write misleading chat history",async()=>{
+  const { coachMessage }=await import("../coach_hooshi.js");
+  const oldFetch=globalThis.fetch,oldLog=console.log;
+  const logs=[],writes=[],calls=[];
+  console.log=(...x)=>logs.push(x);
+  globalThis.fetch=async(_url,options)=>{
+    calls.push(JSON.parse(options.body));
+    return {ok:true,async json(){return {choices:[{finish_reason:"stop",message:{content:null}}]}}};
+  };
+  const DB={
+    prepare(sql){return {args:[],bind(...a){this.args=a;return this;},
+      async run(){writes.push(sql);},
+      async first(){return sql.includes("RETURNING requests")?{requests:1}:null;},
+      async all(){return {results:[]}}};},
+    async batch(items){for(const x of items)await x.run();}
+  };
+  try{
+    const result=await coachMessage({DB,HOOSHI_API_KEY:"mock",COACH_PILOT_PREVIEW:"yes"},
+      {from:{id:123},chat:{id:123,type:"private"},text:"برنج"},
+      async()=>({seller_key:"example:person",store:"شعبه فرضی",mehr_m:120,aban_m:140,days_elapsed:30}));
+    assert.match(result,/پاسخ هوشی در این نوبت کامل نشد/);
+    assert.equal(calls.length,1);
+    assert.ok(!writes.some(x=>x.includes("INSERT INTO coach_messages")));
+  } finally{globalThis.fetch=oldFetch;console.log=oldLog;}
+});
