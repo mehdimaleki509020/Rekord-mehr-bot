@@ -36,7 +36,7 @@ ready = None
 for attempt in range(24):
     try:
         code, result = call(BASE + "/coach-preview-ready")
-        if code == 200 and result.get("preview") is True:
+        if code == 200 and result.get("preview") is True and result.get("full_coach_available") is True:
             ready = result
             break
         print(f"Preview probe {attempt + 1}: status={code}, result={str(result)[:350]}", flush=True)
