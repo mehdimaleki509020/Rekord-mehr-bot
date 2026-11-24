@@ -13,6 +13,8 @@ for attempt in range(30):
         with urllib.request.urlopen(req,timeout=12) as response:
             result=json.load(response)
         print("Fresh Bale Preview readiness (public booleans only):",json.dumps(result,ensure_ascii=False))
+        if result.get("sales_snapshot_ready") is False:
+            print("::warning::Fresh Preview currently lacks imported 172/542 sales snapshot")
         if (result.get("isolated_preview") and result.get("test_bot_token_present") and
             result.get("expected_bot_username_present") and result.get("test_password_present")):
             print("::notice::Fresh Bale Preview inherited all expected secure bindings")
