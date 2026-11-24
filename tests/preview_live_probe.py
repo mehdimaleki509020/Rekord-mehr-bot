@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "https://feature-hooshi-coach-pilot-rekord-mehr-bot.mehdimaleki509020.workers.dev"
+BASE = "https://feature-hooshi-coach-fresh-preview-rekord-mehr-bot.mehdimaleki509020.workers.dev"
 AUD = "rekord-mehr-bot-coach-preview"
 
 def call(url, *, method="GET", headers=None, data=None):
@@ -20,10 +20,11 @@ def call(url, *, method="GET", headers=None, data=None):
         with urllib.request.urlopen(req, timeout=20) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
+        raw = exc.read(900).decode("utf-8", errors="replace")
         try:
-            result = json.load(exc)
-        except (ValueError, OSError):
-            result = {"error": "invalid_json"}
+            result = json.loads(raw)
+        except ValueError:
+            result = {"error": "non_json_http_error", "snippet": raw[:300]}
         return exc.code, result
 
 # The Cloudflare PR deployment is asynchronous. Wait for the new diagnostics route.
@@ -34,7 +35,9 @@ for attempt in range(24):
         if code == 200 and result.get("preview") is True:
             ready = result
             break
-        print(f"Preview probe {attempt + 1}: status={code} (deployment pending)", flush=True)
+        print(f"Preview probe {attempt + 1}: status={code}, result={str(result)[:350]}", flush=True)
+        if code == 403 and attempt >= 2:
+            sys.exit("::error::Preview URL returned HTTP 403 to GitHub Actions; check Cloudflare Access/WAF or hostname policies")
     except Exception as exc:
         print(f"Preview probe {attempt + 1}: connection not ready ({type(exc).__name__})", flush=True)
     time.sleep(10)
