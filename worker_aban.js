@@ -786,10 +786,20 @@ export default {
       }
       if (url.pathname === "/coach-bale-test-ready") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        await init(env);
+        await ensureCoachMetricsTable(env);
+        const [profileCount,groupCount] = await env.DB.batch([
+          env.DB.prepare("SELECT COUNT(*) AS n FROM aban_people WHERE report_id=-9003"),
+          env.DB.prepare("SELECT COUNT(*) AS n FROM coach_group_sales WHERE source_ref=?")
+            .bind("14050903.xlsb:PH11-PH21:day1-2:taxincluded")
+        ]);
+        const salesReady = Number(profileCount.results?.[0]?.n || 0) === 172 &&
+          Number(groupCount.results?.[0]?.n || 0) === 542;
         return json({ok:true,isolated_preview:true,
           test_bot_token_present:Boolean(env.BALE_TEST_BOT_TOKEN),
           expected_bot_username_present:Boolean(env.COACH_TEST_BOT_USERNAME),
-          test_password_present:Boolean(env.COACH_TEST_TOKEN)});
+          test_password_present:Boolean(env.COACH_TEST_TOKEN),
+          sales_snapshot_ready:salesReady});
       }
       if (url.pathname === "/coach-bale-test-setup") {
         if (env.COACH_PILOT_PREVIEW !== "yes" || request.method !== "POST")
