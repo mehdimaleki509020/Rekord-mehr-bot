@@ -67,3 +67,40 @@ export async function coachMessage(env, message, getSeller) {
     return answer;
   } catch(err) {console.log("Coach request failed",String(err?.name||"error"));return "پاسخ مربی در حال حاضر در دسترس نیست. دوباره تلاش کنید.";}
 }
+
+/** Preview-only isolated AI smoke test: no Bale token, no real seller data, no D1 writes. */
+export async function coachPreviewSmoke(env) {
+  if (env.COACH_ENABLED !== "true" || !env.HOOSHI_API_KEY) {
+    return { ok: false, error: "preview_not_configured" };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + env.HOOSHI_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: env.HOOSHI_MODEL || MODEL,
+        messages: [
+          { role: "system", content: "تو مربی فروش غیربرقی هستی. فقط از اعداد ارائه شده استفاده کن. پاسخ کوتاه فارسی بده." },
+          { role: "user", content: "داده فرضی: فروش مهر ۴۰۰ میلیون و فروش آبان ۴۵۰ میلیون تومان است. تارگت آبان برابر بزرگ‌ترِ ۵۰۰ میلیون و ۱.۲ برابر مهر است. فاصله تا تارگت را بگو و یک تمرین فروش پیشنهاد کن. آمار تفکیکی قابلمه موجود نیست." },
+        ],
+        max_tokens: 250,
+        temperature: 0.2,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return { ok: false, error: "provider_http_" + response.status };
+    const result = await response.json();
+    const answer = String(result?.choices?.[0]?.message?.content || "").trim();
+    if (!answer) return { ok: false, error: "empty_provider_response" };
+    return { ok: true, answer: answer.slice(0, 1500), scenario: "fictional_seller" };
+  } catch (error) {
+    return { ok: false, error: error?.name === "AbortError" ? "timeout" : "provider_network_error" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
