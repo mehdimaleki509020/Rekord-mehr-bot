@@ -775,7 +775,7 @@ export default {
         return json({ok:false,error:"method_not_allowed"},405);
       }
       // Preview-only diagnostics: expose configuration state, never secret values.
-      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
+      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full" || url.pathname === "/coach-ci-import") {
         if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
 
         if (request.method === "GET" && url.pathname === "/coach-preview-ready") {
@@ -786,7 +786,8 @@ export default {
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
             test_token_present: Boolean(env.COACH_TEST_TOKEN),
             full_coach_available: true,
-            coach_release: "azar-chat-retention-3"
+            coach_release: "verified-real-data-import-1",
+            import_available: true
           });
         }
 
@@ -796,6 +797,36 @@ export default {
         }
 
         // CI endpoint validates signed GitHub OIDC claims; no shared secret in Actions.
+        if (url.pathname === "/coach-ci-import") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          await init(env);
+          await ensureCoachMetricsTable(env);
+          const sellerKey="ci-import:"+crypto.randomUUID();
+          const profile={
+            seller_key:sellerKey,store_key:"ci-import",store:"شعبه ساختگی",
+            seller_name:"فروشنده ساختگی",mehr_m:400,aban_m:450,
+            days_elapsed:30,report_id:-9003
+          };
+          const row={
+            seller_key:sellerKey,period:"1405-09",through_day:2,
+            group_code:"cookware",sales_m:25,
+            source_ref:"14050903.xlsb:PH11-PH21:day1-2:taxincluded"
+          };
+          try {
+            const p=await importCoachBatch(env,"profiles",[profile]);
+            const g=await importCoachBatch(env,"metrics",[row]);
+            const read=await env.DB.prepare(
+              "SELECT sales_m FROM coach_group_sales WHERE seller_key=? AND period='1405-09' AND group_code='cookware'"
+            ).bind(sellerKey).first();
+            const ok=p.ok && g.ok && Number(read?.sales_m)===25;
+            return json({ok,profiles:p.accepted||0,metrics:g.accepted||0,
+              persisted:Boolean(read),scenario:"synthetic_preview_import"},ok?200:502);
+          } finally {
+            try {await env.DB.prepare("DELETE FROM coach_group_sales WHERE seller_key=?").bind(sellerKey).run();}catch(_){}
+            try {await env.DB.prepare("DELETE FROM aban_people WHERE seller_key=?").bind(sellerKey).run();}catch(_){}
+          }
+        }
         if (url.pathname === "/coach-ci-smoke" || url.pathname === "/coach-ci-full") {
           if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
           if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
