@@ -743,7 +743,7 @@ export default {
             hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
             test_token_present: Boolean(env.COACH_TEST_TOKEN),
             full_coach_available: true,
-            coach_release: "azar-coach-parser-2"
+            coach_release: "azar-chat-retention-3"
           });
         }
 
