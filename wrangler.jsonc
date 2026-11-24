@@ -13,7 +13,8 @@
   "previews": {
     "vars": {
       "COACH_ENABLED": "true",
-      "COACH_PILOT_PREVIEW": "yes"
+      "COACH_PILOT_PREVIEW": "yes",
+      "COACH_TEST_BOT_USERNAME": "EntekhabManCoachTestBot"
     },
     "d1_databases": [
       {
