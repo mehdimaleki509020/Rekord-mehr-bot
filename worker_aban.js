@@ -296,6 +296,16 @@ async function supervisorOf(env, userId) {
 }
 
 async function admin(env, user, claim = false) {
+  if (env.COACH_PILOT_PREVIEW === "yes") {
+    // Never inherit Production administrators or allow first-message admin claims.
+    if (typeof env.__coachTestSend === "function") {
+      const row = await env.DB.prepare("SELECT 1 AS x FROM admins WHERE user_id=?")
+        .bind(String(user.id)).first();
+      return Boolean(row);
+    }
+    return Boolean(env.COACH_PILOT_ADMIN_ID) &&
+      String(env.COACH_PILOT_ADMIN_ID) === String(user.id);
+  }
   const ids = String(env.ADMIN_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   if (ids.includes(String(user.id))) return true;
   if (await env.DB.prepare("SELECT 1 AS x FROM admins WHERE user_id=?").bind(String(user.id)).first()) return true;
@@ -399,6 +409,7 @@ async function hook(request, env) {
   const update = await request.json();
   const message = update.message;
   if (!message) return new Response("OK");
+  if (message.document && env.COACH_PILOT_PREVIEW === "yes") return new Response("OK");
   if (message.document) {
     await upload(env, message);
     return new Response("OK");
@@ -406,6 +417,23 @@ async function hook(request, env) {
   const chat = message.chat?.id;
   const user = message.from || {};
   const text = String(message.text || "").trim();
+
+  if (env.COACH_PILOT_PREVIEW === "yes") {
+    const permitted = text === "شناسه من" || text === "/start" ||
+      text === "شروع" || text === "مربی من" || text === "پاکسازی مربی" ||
+      /^مربی(?:\s+|[،,:]\s*)/u.test(text) ||
+      /^ت[اأ]یید مربی\s+/u.test(text);
+    if (!permitted) {
+      if (message.chat?.type === "private")
+        await send(env, chat, "این بازو فقط برای پایلوت مربی هوشمند است. بنویسید: مربی من");
+      return new Response("OK");
+    }
+    if (text === "/start" || text === "شروع") {
+      if (message.chat?.type === "private")
+        await send(env,chat,"مربی آزمایشی غیربرقی. برای شناسایی حساب بنویسید: شناسه من. پس از تأیید مدیر، بنویسید: مربی من.");
+      return new Response("OK");
+    }
+  }
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
