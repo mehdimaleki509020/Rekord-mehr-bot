@@ -1,3 +1,4 @@
+import { chatPolicyContext } from "./coach_chat_policies.js";
 import { kbContext, kbCategory } from "./coach_knowledge.js";
 import { coachCategoryContext } from "./coach_metrics.js";
 // Hooshi pilot coach: private chats only, opt-in, bounded context and output.
@@ -61,6 +62,11 @@ export async function coachMessage(env, message, getSeller) {
   const categoryContext = await coachCategoryContext(env, seller.seller_key);
   const managementContext = env.COACH_PILOT_PREVIEW === "yes" ?
     await kbContext(env,{store_key:seller.store_key||"",category_code:kbCategory(question)}) : "";
+  // Manager can dictate/edit operational rules directly in ChatGPT.
+  // This module stores ONLY approved, non-confidential public instructions.
+  const liveChatPolicyContext = env.COACH_PILOT_PREVIEW === "yes" ?
+    chatPolicyContext({store_key:seller.store_key||"",store:seller.store||"",
+      category_code:kbCategory(question),now:new Date().toISOString().slice(0,10)}) : "";
   const system = [
     "تو مربی حرفه‌ای فروش گروه کالای غیربرقی شبکه انتخاب من هستی. فارسی روان، کوتاه و محترمانه پاسخ بده.",
     "در هر پاسخ حداکثر یک تمرین مشخص و یک سؤال پیگیری بده؛ فروش غیرصادقانه یا فشار به مشتری را توصیه نکن.",
@@ -70,6 +76,7 @@ export async function coachMessage(env, message, getSeller) {
     categoryContext,
     "فقط قواعد تاییدشده و متن مجاز مدیر را لحاظ کن. یادداشت محرمانه، متن پیش‌نویس و محتوای لغوشده قابل استفاده یا افشا نیست.",
     managementContext,
+    liveChatPolicyContext,
     "اطلاعات محرمانه دیگر فروشندگان را فاش نکن. داده‌های گزارش مربوط به آبان است و ممکن است قدیمی باشد.",
     "هیچ رقم فروش فردی را «فروش فروشگاه» یا «فروش شعبه» معرفی نکن؛ جمع فروش فروشگاه اصلاً به تو داده نشده است. برای گروه‌ها نیز فقط فروش همین فروشنده در دوره مشخص ارائه شده، نه سایر فروشندگان.",
     "داده‌های گروه‌های کالایی مربوط به روزهای ۱ و ۲ آبان و آذر ۱۴۰۵ هستند؛ آن‌ها را فروش کل ماه یا فروش زیرگروه خاصی مانند سرویس قابلمه معرفی نکن.",
