@@ -56,7 +56,13 @@ async function bale(env, method, payload) {
   if (!response.ok || data.ok === false) throw Error("Bale " + method + ": " + (data.description || response.status));
   return data;
 }
-const send = (env, chat, text) => chat ? bale(env, "sendMessage", { chat_id: chat, text }) : Promise.resolve();
+const send = (env, chat, text) => {
+  // Injectable transport exists only in the Preview CI's internal synthetic request.
+  // Never sends a real Bale message or requires BALE_TOKEN during the test.
+  if (env.COACH_PILOT_PREVIEW === "yes" && typeof env.__coachTestSend === "function")
+    return env.__coachTestSend(chat, String(text));
+  return chat ? bale(env, "sendMessage", { chat_id: chat, text }) : Promise.resolve();
+};
 
 // GitHub cron is best-effort and may run hours late. When a fine-grained
 // Actions:write token is configured as a Worker secret, dispatch immediately.
@@ -754,27 +760,89 @@ export default {
             const result = await coachPreviewSmoke(env);
             return json(result,result.ok?200:502);
           }
-          // Exercise the full private-chat coaching + D1 flow using invented records only.
-          // Clean up the synthetic user data afterward; real seller records remain untouched.
-          const userId = "__coach_ci_synthetic__:" + crypto.randomUUID();
-          const fictitiousSeller = {
-            seller_name:"فروشنده فرضی", store:"شعبه آزمایشی",
-            mehr_m:400, aban_m:450, days_elapsed:30
-          };
+          // Real webhook-shaped Bale messages, with a mock outbound transport and
+          // a one-time fake seller. No Bale API key, production D1, or real seller involved.
+          const number = String(crypto.getRandomValues(new Uint32Array(1))[0] % 900000000 + 100000000);
+          const userId = "81" + number;
+          const outsiderId = "82" + number;
+          const adminId = "83" + number;
+          const marker = crypto.randomUUID().slice(0, 8);
+          const sellerName = "فروشنده فرضی " + marker;
+          const storeName = "شعبه آزمایشی " + marker;
+          const storeKey = key(storeName);
+          const sellerKey = "coachci:" + crypto.randomUUID();
+          const sent = [];
+          const fakeEnv = Object.assign(Object.create(env), {
+            __coachTestSend: async (chat, text) => { sent.push({chat, text}); }
+          });
+          const runBale = async (msg) => hook(new Request("https://preview.invalid/fictional-webhook", {
+            method: "POST", headers: {"content-type":"application/json"},
+            body: JSON.stringify({message: msg})
+          }), fakeEnv);
+          const makeMessage = (fromId, text, type = "private") => ({
+            from: {id: fromId},
+            chat: {id: type === "private" ? fromId : "-123456", type},
+            text
+          });
+          let approvalOk = false, unapprovedBlocked = false, privateOnly = false;
+          let answer = "", storedMessages = 0;
           try {
-            const answer = await coachMessage(env,{
-              from:{id:userId}, chat:{type:"private",id:userId},
-              text:"مربی فروش مهر من ۴۰۰ میلیون و فروش آبان ۴۵۰ میلیون بوده؛ چرا به تارگتم نرسیدم و امروز چه تمرینی انجام دهم؟"
-            }, async () => fictitiousSeller);
-            const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM coach_messages WHERE user_id=?").bind(userId).first();
-            const storedMessages = Number(row?.n || 0);
-            const ok = storedMessages === 2 && Boolean(answer) &&
+            await env.DB.prepare(
+              "INSERT INTO aban_people(seller_key,store_key,store,seller_name,mehr_m,aban_m,days_elapsed,report_id) VALUES(?,?,?,?,400,450,30,-1)"
+            ).bind(sellerKey,storeKey,storeName,sellerName).run();
+            await env.DB.prepare(
+              "INSERT INTO admins(user_id,first_name,username) VALUES(?,?,?)"
+            ).bind(adminId,"مدیر آزمایش","coach_ci_admin").run();
+            // The outsider self-registers a known name, but that is not coach authorization.
+            await env.DB.prepare(
+              "INSERT INTO aban_links(user_id,seller_key) VALUES(?,?)"
+            ).bind(outsiderId,sellerKey).run();
+            sent.length = 0;
+            await runBale(makeMessage(outsiderId,"مربی من"));
+            unapprovedBlocked = sent.length === 1 &&
+              sent[0].text.includes("تأیید نشده") &&
+              !sent[0].text.includes("۴۵۰");
+            sent.length = 0;
+            const adminMsg = makeMessage(adminId,
+              "تایید مربی " + sellerName + " | " + storeName, "group");
+            adminMsg.reply_to_message = {from:{id:userId}};
+            await runBale(adminMsg);
+            const seller = await verifiedCoachSeller(env,userId);
+            approvalOk = seller?.seller_key === sellerKey &&
+              sent.some(x=>x.text.includes("✅ دسترسی مربی"));
+            sent.length = 0;
+            await runBale(makeMessage(userId,"مربی من", "group"));
+            privateOnly = sent.length === 1 &&
+              sent[0].text.includes("فقط در گفت‌وگوی خصوصی") &&
+              !sent[0].text.includes("۴۵۰");
+            sent.length = 0;
+            await runBale(makeMessage(userId,
+              "مربی برای بهبود فروش امروز چه کاری انجام دهم؟"));
+            answer = sent[0]?.text || "";
+            const row = await env.DB.prepare(
+              "SELECT COUNT(*) AS n FROM coach_messages WHERE user_id=?"
+            ).bind(userId).first();
+            storedMessages = Number(row?.n || 0);
+            const ok = approvalOk && unapprovedBlocked && privateOnly &&
+              storedMessages === 2 && Boolean(answer) &&
               !/در حال حاضر در دسترس نیست|موقتاً برقرار نیست|سقف آزمایشی/.test(answer);
-            return json({ok,answer:String(answer).slice(0,1500),storedMessages,scenario:"fictional_private_chat_d1"},ok?200:502);
+            return json({ok,approvalOk,unapprovedBlocked,privateOnly,
+              storedMessages,answer:answer.slice(0,1500),
+              scenario:"fictional_bale_webhook_verified_seller_d1"}, ok?200:502);
           } finally {
-            // Cleanup is scoped to this random synthetic user and Preview D1 only.
-            try { await env.DB.prepare("DELETE FROM coach_messages WHERE user_id=?").bind(userId).run(); } catch (_) {}
-            try { await env.DB.prepare("DELETE FROM coach_sessions WHERE user_id=?").bind(userId).run(); } catch (_) {}
+            // Clean only this run's fake rows; avoid modifying any genuine seller.
+            const deletes = [
+              ["coach_messages","user_id",userId],
+              ["coach_sessions","user_id",userId],
+              ["coach_verified_links","user_id",userId],
+              ["aban_links","user_id",outsiderId],
+              ["admins","user_id",adminId],
+              ["aban_people","seller_key",sellerKey],
+            ];
+            for (const [table,field,value] of deletes) {
+              try { await env.DB.prepare("DELETE FROM "+table+" WHERE "+field+"=?").bind(value).run(); }
+              catch (_) {}
+            }
           }
         }
         if (url.pathname === "/coach-preview-test") {
