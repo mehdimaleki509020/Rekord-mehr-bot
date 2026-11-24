@@ -153,3 +153,49 @@ test("empty non-length completion retries only once and never writes misleading 
     assert.ok(!writes.some(x=>x.includes("INSERT INTO coach_messages")));
   } finally{globalThis.fetch=oldFetch;console.log=oldLog;}
 });
+
+test("failed Hooshi completion refunds exactly one quota slot and keeps user identity",async()=>{
+ const {coachMessage}=await import("../coach_hooshi.js");
+ const originalFetch=globalThis.fetch, originalLog=console.log;
+ const statements=[], limits=[];
+ globalThis.fetch=async()=>({ok:true,async json(){return {choices:[{finish_reason:"stop",message:{content:null}}]}}});
+ console.log=()=>{};
+ const DB={
+   prepare(sql){return {sql,args:[],bind(...a){this.args=a;return this;},
+     async run(){statements.push({sql,args:this.args});return {};},
+     async first(){if(sql.includes("RETURNING requests")){limits.push(this.args[1]);return {requests:13};}return null;},
+     async all(){return {results:[]}}};},
+   async batch(items){for(const x of items)await x.run();}
+ };
+ try{
+   const response=await coachMessage({DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"mock"},
+     {from:{id:12345},chat:{id:12345,type:"private"},text:"برنج"},
+     async()=>({seller_key:"example:seller",store:"شعبه",mehr_m:1,aban_m:2,days_elapsed:30}));
+   assert.match(response,/پاسخ هوشی در این نوبت کامل نشد/);
+   assert.deepEqual(limits,[60],"existing 12-message balance must no longer block coaching");
+   const refunds=statements.filter(x=>x.sql.includes("requests=MAX(0,requests-1)"));
+   assert.equal(refunds.length,1);
+   assert.equal(refunds[0].args[0],"12345");
+   assert.ok(!statements.some(x=>x.sql.includes("INSERT INTO coach_messages")));
+ }finally{globalThis.fetch=originalFetch;console.log=originalLog;}
+});
+test("successful coaching does not refund quota",async()=>{
+ const {coachMessage}=await import("../coach_hooshi.js");
+ const originalFetch=globalThis.fetch;
+ const statements=[];
+ globalThis.fetch=async()=>({ok:true,async json(){return {choices:[{finish_reason:"stop",message:{content:"برای برنج، نوع پخت را مشخص کنید."}}]}}});
+ const DB={
+  prepare(sql){return {sql,args:[],bind(...a){this.args=a;return this;},
+    async run(){statements.push(sql);return {};},
+    async first(){return sql.includes("RETURNING requests")?{requests:14}:null;},
+    async all(){return {results:[]}}};},
+  async batch(items){for(const x of items)await x.run();}
+ };
+ try{
+   const response=await coachMessage({DB,COACH_PILOT_PREVIEW:"yes",HOOSHI_API_KEY:"mock"},
+     {from:{id:12346},chat:{id:12346,type:"private"},text:"برنج"},
+     async()=>({seller_key:"example:seller2",store:"شعبه",mehr_m:1,aban_m:2,days_elapsed:30}));
+   assert.match(response,/برای برنج/);
+   assert.ok(!statements.some(x=>x.includes("requests=MAX(0,requests-1)")));
+ }finally{globalThis.fetch=originalFetch;}
+});
