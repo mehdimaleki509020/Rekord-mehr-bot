@@ -17,7 +17,7 @@ export async function coachMessage(env, message, getSeller) {
   if (!start && !reset && !raw.startsWith("مربی ")) return null;
   if (!env.HOOSHI_API_KEY) return "سرویس مربی هنوز پیکربندی نشده است.";
   const seller = await getSeller(env, userId);
-  if (!seller) return "ابتدا با دستور «ثبت نام نام و نام خانوادگی» در ربات ثبت‌نام کنید.";
+  if (!seller) return "حساب شما برای دریافت اطلاعات شخصی مربی هنوز توسط مدیر طرح تأیید نشده است. از مدیر بخواهید دسترسی مربی شما را تأیید کند.";
   await env.DB.batch([
     env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_sessions(user_id TEXT PRIMARY KEY,day TEXT NOT NULL,requests INTEGER NOT NULL DEFAULT 0)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS coach_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)"),
@@ -41,7 +41,7 @@ export async function coachMessage(env, message, getSeller) {
     "در هر پاسخ حداکثر یک تمرین مشخص و یک سؤال پیگیری بده؛ فروش غیرصادقانه یا فشار به مشتری را توصیه نکن.",
     "فقط از داده‌های تأییدشده استفاده کن. اطلاعات فروش گروه کالا، موجودی، تعداد فاکتور و فروش آذر در این نسخه در دسترس نیست؛ درباره آن‌ها عددسازی نکن.",
     "اطلاعات محرمانه دیگر فروشندگان را فاش نکن. داده‌های گزارش مربوط به آبان است و ممکن است قدیمی باشد.",
-    "نام فروشنده: "+String(seller.seller_name).slice(0,100),
+    "نقش: فروشنده گروه غیربرقی",
     "فروشگاه: "+String(seller.store).slice(0,100),
     "فروش مهر (میلیون تومان): "+Number(seller.mehr_m||0),
     "فروش آبان تا روز "+Number(seller.days_elapsed||0)+" (میلیون تومان): "+Number(seller.aban_m||0),
