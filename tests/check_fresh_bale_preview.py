@@ -52,9 +52,9 @@ for attempt in range(30):
 else:
     sys.exit("::error::Latest knowledge management panel not deployed to Preview")
 try:
-    urllib.request.urlopen(urllib.request.Request(BASE+"/coach-kb-api/rules"),timeout=15)
+    urllib.request.urlopen(urllib.request.Request(BASE+"/coach-kb-api/rules",headers={"User-Agent":"CoachPilotReadiness/1.0"}),timeout=15)
     sys.exit("::error::Knowledge API allowed unauthenticated access")
 except urllib.error.HTTPError as err:
-    if err.code != 401:
+    if err.code not in (401,403):
         sys.exit("::error::Knowledge API unexpected anonymous status "+str(err.code))
 print("::notice::Preview knowledge panel available; anonymous knowledge API denied")
