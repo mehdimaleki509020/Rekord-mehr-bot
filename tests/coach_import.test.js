@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Script } from "node:vm";
 import { importCoachBatch, coachImportPage, coachImportMaxBytes } from "../coach_import.js";
 
 const profile={
@@ -47,4 +48,12 @@ test("import form is local-file based and never embeds private sales",()=>{
  assert.match(html,/type="password"/);
  assert.ok(coachImportMaxBytes>=10000);
  assert.doesNotMatch(html,/رمز تصادفی شما|HOOSHI_API_KEY.*Bearer/);
+});
+
+test("real upload-page inline JavaScript must parse in browser",()=>{
+ const html=coachImportPage();
+ const match=html.match(/<script>([\\s\\S]*?)<\\/script>/i);
+ assert.ok(match,"HTML should embed its uploader script");
+ assert.doesNotThrow(()=>new Script(match[1],{filename:"coach-import-page-inline.js"}));
+ assert.match(match[1],/fetch\\("\\/coach-import-batch"/);
 });
