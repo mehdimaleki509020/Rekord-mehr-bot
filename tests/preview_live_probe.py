@@ -95,7 +95,9 @@ full_code, full = call(BASE + "/coach-ci-full", method="POST",
                        headers={"Authorization": "Bearer " + oidc}, data=b"{}")
 print("Full private-coach + D1 HTTP:", full_code)
 print("Full coach result (fictional only):", json.dumps(full, ensure_ascii=False)[:1700])
-if full_code != 200 or not full.get("ok") or full.get("storedMessages") != 2:
+if (full_code != 200 or not full.get("ok") or full.get("storedMessages") != 2
+        or not full.get("approvalOk") or not full.get("unapprovedBlocked")
+        or not full.get("privateOnly")):
     sys.exit("::error::Full coach with Preview D1 did not pass")
-print("::notice::Private coach + D1 conversation history passed with synthetic seller and cleanup")
+print("::notice::Fake Bale webhook, administrator approval, privacy gates and D1 chat passed")
 
