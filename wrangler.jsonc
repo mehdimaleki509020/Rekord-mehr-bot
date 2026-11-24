@@ -12,7 +12,8 @@
   ],
   "previews": {
     "vars": {
-      "COACH_ENABLED": "true"
+      "COACH_ENABLED": "true",
+      "COACH_PILOT_PREVIEW": "yes"
     },
     "d1_databases": [
       {
