@@ -29,7 +29,9 @@ const nameKey = (value) => {
   }
   return key(value);
 };
-const token = (env) => env.BALE_TOKEN || env.BALE_BOT_TOKEN || env.BOT_TOKEN || "";
+const token = (env) => env.COACH_PILOT_PREVIEW === "yes"
+  ? String(env.BALE_TEST_BOT_TOKEN || "")
+  : (env.BALE_TOKEN || env.BALE_BOT_TOKEN || env.BOT_TOKEN || "");
 export async function secretWebhookPath(env) {
   if (!token(env)) throw Error("BALE TOKEN NOT FOUND");
   // Bale does not provide a documented signed-update header. A long,
@@ -732,6 +734,43 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      // Never allow the operational bot's /setup or /debug paths to run in Preview.
+      // A Preview must use its OWN BALE_TEST_BOT_TOKEN, never a Production token.
+      if (env.COACH_PILOT_PREVIEW === "yes" &&
+          (url.pathname === "/setup" || url.pathname === "/debug" || url.pathname.startsWith("/processor/"))) {
+        return json({ok:false,error:"not_found"},404);
+      }
+      if (url.pathname === "/coach-bale-test-ready") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ok:false,error:"not_found"},404);
+        return json({ok:true,isolated_preview:true,
+          test_bot_token_present:Boolean(env.BALE_TEST_BOT_TOKEN),
+          expected_bot_username_present:Boolean(env.COACH_TEST_BOT_USERNAME),
+          test_password_present:Boolean(env.COACH_TEST_TOKEN)});
+      }
+      if (url.pathname === "/coach-bale-test-setup") {
+        if (env.COACH_PILOT_PREVIEW !== "yes" || request.method !== "POST")
+          return json({ok:false,error:"not_found"},404);
+        if (!env.COACH_TEST_TOKEN ||
+          request.headers.get("x-coach-test-token")?.trim() !== String(env.COACH_TEST_TOKEN).trim())
+          return json({ok:false,error:"unauthorized"},401);
+        if (!env.BALE_TEST_BOT_TOKEN || !env.COACH_TEST_BOT_USERNAME)
+          return json({ok:false,error:"test_bot_not_configured"},503);
+        // Identity check prevents using the Production bot by accident.
+        const who = await bale(env,"getMe");
+        const actual = String(who?.result?.username || "").replace(/^@/,"").toLowerCase();
+        const expected = String(env.COACH_TEST_BOT_USERNAME).replace(/^@/,"").trim().toLowerCase();
+        if (!actual || !expected || actual !== expected)
+          return json({ok:false,error:"test_bot_identity_mismatch"},409);
+        const configured = await bale(env,"getWebhookInfo");
+        const oldUrl = String(configured?.result?.url || "");
+        const destination = url.origin + await secretWebhookPath(env);
+        // Refuse to move an existing webhook; a Production bot must never be hijacked.
+        if (oldUrl && oldUrl !== destination)
+          return json({ok:false,error:"existing_webhook_conflict"},409);
+        const saved = await bale(env,"setWebhook",{url:destination});
+        return json({ok:saved.ok !== false,webhook_configured:true,
+          username:actual,preview:true});
+      }
       // Private data import is confined to isolated Preview D1 and requires a secret.
       if (url.pathname === "/coach-import-page" ||
           url.pathname === "/coach-import-batch" ||
