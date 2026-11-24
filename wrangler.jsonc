@@ -11,6 +11,9 @@
     }
   ],
   "previews": {
+    "vars": {
+      "COACH_ENABLED": "true"
+    },
     "d1_databases": [
       {
         "binding": "DB",
