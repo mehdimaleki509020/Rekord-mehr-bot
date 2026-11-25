@@ -124,8 +124,32 @@ export async function opsHttp(req,env,url,{authorize,send,requestFetch=fetch}){
  if(!report)return error("invalid_lease",409);
  if(action==="file"&&req.method==="GET"){
   if(!env.BALE_TEST_BOT_TOKEN)return error("bot_not_configured",503);
-  const r=await requestFetch("https://tapi.bale.ai/file/bot"+env.BALE_TEST_BOT_TOKEN+"/"+report.file_path,{redirect:"error"});
-  if(!r.ok)return error("file_unavailable",502);
+  // Refresh the file locator before each attempt; permit bounded, HTTPS Bale redirects.
+  const bot=env.BALE_TEST_BOT_TOKEN;
+  let path=report.file_path;
+  try{
+   const meta=await requestFetch("https://tapi.bale.ai/bot"+bot+"/getFile",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({file_id:report.file_id}),redirect:"error"});
+   if(meta.ok){
+    const data=await meta.json(),p=data?.result?.file_path;
+    if(clean(p,700)&&p&&!p.includes("..")&&!/[?#\\]/.test(p)&&!p.startsWith("/"))path=p;
+   }
+  }catch{console.log("Preview file locator refresh unavailable");}
+  let target=new URL("https://tapi.bale.ai/file/bot"+bot+"/"+path),r;
+  try{
+   for(let hop=0;hop<5;hop++){
+    r=await requestFetch(target.href,{redirect:"manual"});
+    if(![301,302,303,307,308].includes(r.status))break;
+    const loc=r.headers.get("location");
+    if(!loc)return error("file_redirect_missing",502);
+    const next=new URL(loc,target);
+    if(next.protocol!=="https:"||next.username||next.password||next.port||!(next.hostname==="bale.ai"||next.hostname.endsWith(".bale.ai"))){
+     console.log("Preview file redirect outside allowed Bale domains");
+     return error("file_redirect_restricted",502);
+    }
+    target=next;
+   }
+  }catch{console.log("Preview file transport failed");return error("file_transport_failed",502);}
+  if(!r?.ok){console.log("Preview file upstream status "+Number(r?.status||0));return error("file_unavailable",502);}
   const length=Number(r.headers.get("content-length")||0);
   if(length>MAX_FILE)return error("too_large",413);
   return new Response(r.body,{headers:{"content-type":"application/octet-stream","cache-control":"no-store"}});
