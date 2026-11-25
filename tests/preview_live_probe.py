@@ -1,0 +1,151 @@
+"""Safely probe Cloudflare preview and run one fictional-seller Hooshi test with GitHub OIDC.
+
+This job never prints or stores the OIDC token. No real seller data is transmitted.
+"""
+import base64
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+BASE = "https://feature-hooshi-coach-fresh-preview-rekord-mehr-bot.mehdimaleki509020.workers.dev"
+AUD = "rekord-mehr-bot-coach-preview"
+
+def call(url, *, method="GET", headers=None, data=None):
+    # Cloudflare error 1010 rejects Python-urllib's default User-Agent on workers.dev.
+    # Identify the legitimate CI client explicitly (per Cloudflare's official docs).
+    client_headers = {"User-Agent": "RekordMehrCoachPreviewCI/1.0"}
+    client_headers.update(headers or {})
+    req = urllib.request.Request(url, method=method, headers=client_headers, data=data)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read(900).decode("utf-8", errors="replace")
+        try:
+            result = json.loads(raw)
+        except ValueError:
+            result = {"error": "non_json_http_error", "snippet": raw[:300]}
+        return exc.code, result
+
+# The Cloudflare PR deployment is asynchronous. Wait for the new diagnostics route.
+ready = None
+for attempt in range(24):
+    try:
+        code, result = call(BASE + "/coach-preview-ready")
+        if (code == 200 and result.get("preview") is True and
+                result.get("full_coach_available") is True and
+                result.get("coach_release") == "verified-real-data-import-2" and
+                result.get("import_available") is True):
+            ready = result
+            break
+        print(f"Preview probe {attempt + 1}: status={code}, result={str(result)[:350]}", flush=True)
+        if code == 403 and attempt >= 2:
+            sys.exit("::error::Preview URL returned HTTP 403 to GitHub Actions; check Cloudflare Access/WAF or hostname policies")
+    except Exception as exc:
+        print(f"Preview probe {attempt + 1}: connection not ready ({type(exc).__name__})", flush=True)
+    time.sleep(10)
+
+if ready is None:
+    sys.exit("::error::Preview diagnostics did not become available. Check Cloudflare deployment and previews.vars.")
+print("Preview readiness (values only, no secrets):", json.dumps(ready, ensure_ascii=False))
+if not ready.get("coach_enabled"):
+    sys.exit("::error::COACH_ENABLED is disabled in deployed preview")
+if not ready.get("hooshi_key_present"):
+    sys.exit("::error::HOOSHI_API_KEY is not bound to this Cloudflare preview deployment")
+if not ready.get("test_token_present"):
+    print("::warning::COACH_TEST_TOKEN is not bound to this Cloudflare preview deployment")
+
+# GitHub OIDC obtains a short-lived signed credential (distinct from all app secrets).
+request_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+separator = "&" if "?" in request_url else "?"
+request_url += separator + urllib.parse.urlencode({"audience": AUD})
+req = urllib.request.Request(request_url, headers={
+    "Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+})
+with urllib.request.urlopen(req, timeout=15) as response:
+    oidc = json.load(response)["value"]
+
+# Print only non-secret identity claims to aid debugging if the issuer changes.
+segment = oidc.split(".")[1]
+claims = json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
+print("OIDC claims:", json.dumps({
+    "ref": claims.get("ref"),
+    "event_name": claims.get("event_name"),
+    "workflow_ref": claims.get("workflow_ref"),
+    "repository_id": claims.get("repository_id"),
+    "actor_id": claims.get("actor_id")
+}, ensure_ascii=False))
+
+code, result = call(BASE + "/coach-ci-smoke", method="POST",
+                    headers={"Authorization": "Bearer " + oidc}, data=b"{}")
+print("Live Hooshi smoke HTTP:", code)
+if not result.get("ok"):
+    sys.exit("::error::Hooshi test failed: " + str(result.get("error", "unknown")))
+answer = str(result.get("answer", ""))
+print("Hooshi response (fictional seller only):", answer[:1500])
+if not answer.strip():
+    sys.exit("::error::Hooshi returned an empty response")
+ascii_digits = answer.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+if "500" not in ascii_digits or "50" not in ascii_digits:
+    print("::warning::Review target/difference reasoning: expected 500 million target and 50 million gap")
+print("::notice::Live provider connection succeeded using fictional seller only")
+# Also exercise the actual chat coach, D1 session/history, and synthetic data cleanup.
+full_code, full = call(BASE + "/coach-ci-full", method="POST",
+                       headers={"Authorization": "Bearer " + oidc}, data=b"{}")
+print("Full private-coach + D1 HTTP:", full_code)
+print("Full coach result (fictional only):", json.dumps(full, ensure_ascii=False)[:1700])
+if (full_code != 200 or not full.get("ok") or full.get("storedMessages") != 2
+        or not full.get("approvalOk") or not full.get("unapprovedBlocked")
+        or not full.get("privateOnly")):
+    sys.exit("::error::Full coach with Preview D1 did not pass")
+print("::notice::Fake Bale webhook, administrator approval, privacy gates and D1 chat passed")
+
+
+# Test the new D1 batch importer using only a fabricated single seller.
+imp_code, imp=call(BASE+"/coach-ci-import", method="POST",
+                   headers={"Authorization":"Bearer "+oidc},data=b"{}")
+print("Synthetic authenticated sales import HTTP:",imp_code)
+print("Synthetic import result:",json.dumps(imp,ensure_ascii=False))
+if imp_code!=200 or not imp.get("ok") or not imp.get("persisted"):
+    sys.exit("::error::Preview batch importer verification did not pass")
+print("::notice::Preview sales importer verified without uploading any real seller data")
+
+# Verify real upload page exists without sending any seller data or API secrets.
+page_req=urllib.request.Request(BASE+"/coach-import-page",
+     headers={"User-Agent":"RekordMehrCoachPreviewCI/1.0"})
+with urllib.request.urlopen(page_req,timeout=15) as page_response:
+    upload_html=page_response.read(22000).decode("utf-8")
+if ("coach-import-batch" not in upload_html or 'type="file"' not in upload_html or
+    "در حال بررسی رمز و اتصال به Preview" not in upload_html):
+    sys.exit("::error::Preview upload page failed structural validation")
+print("::notice::Preview upload page responds successfully and accepts local JSON files")
+
+# The counts can be checked again later without exposing upload contents or a secret.
+counts_code,counts=call(BASE+"/coach-ci-import-status", method="POST",
+                        headers={"Authorization":"Bearer "+oidc},data=b"{}")
+print("Secure Preview import counts:",json.dumps(counts,ensure_ascii=False))
+if counts_code!=200 or not counts.get("ok"):
+    sys.exit("::error::Authenticated import status is unavailable")
+
+# Bale sandbox must not control or expose the existing Production Bale webhook.
+gate, _ = call(BASE + "/setup")
+if gate != 404:
+    sys.exit("::error::Unsafe legacy Bale /setup is reachable in Preview")
+ready_code, ready_bot = call(BASE + "/coach-bale-test-ready")
+print("Bale test bot Preview variables (booleans only):", json.dumps(ready_bot,ensure_ascii=False))
+if ready_code != 200 or not ready_bot.get("isolated_preview"):
+    sys.exit("::error::Isolated Bale test readiness endpoint missing")
+bot_req = urllib.request.Request(BASE + "/coach-bale-test-page",
+    headers={"User-Agent":"RekordMehrCoachPreviewCI/1.0"})
+with urllib.request.urlopen(bot_req, timeout=15) as response:
+    bot_html = response.read(25000).decode("utf-8")
+if "coach-bale-test-setup" not in bot_html or "BALE_TEST_BOT_TOKEN" not in bot_html:
+    sys.exit("::error::Bale isolated pilot setup page is missing")
+unauthorized, _ = call(BASE + "/coach-bale-test-setup", method="POST", data=b"")
+if unauthorized != 401:
+    sys.exit("::error::Bale pilot setup is not properly secret-gated")
+print("::notice::Bale Preview isolation, protected setup, and pilot page passed without any bot token")

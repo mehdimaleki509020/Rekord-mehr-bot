@@ -16,11 +16,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: rekord-mehr-report-processor
+  group: rekord-mehr-report-processor-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   process:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -132,3 +133,20 @@ jobs:
             -H "Content-Type: application/json" \
             --data-binary @error.json \
             "${WORKER_URL%/}/processor/jobs/${{ steps.claim.outputs.job_id }}/error" || true
+
+  process_preview:
+    if: github.ref == 'refs/heads/feature/hooshi-coach-bale-new-preview' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: coach-ops-preview-only
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install report readers
+        run: python -m pip install --disable-pip-version-check --no-cache-dir pyxlsb==1.0.10 openpyxl==3.1.5
+      - name: Drain isolated Preview queue
+        run: python processor_ops_run.py
