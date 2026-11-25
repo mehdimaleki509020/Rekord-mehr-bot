@@ -279,12 +279,9 @@ async function admin(env, user, claim = false) {
   const ids = String(env.ADMIN_IDS || "").split(",").map((x) => x.trim()).filter(Boolean);
   if (ids.includes(String(user.id))) return true;
   if (await env.DB.prepare("SELECT 1 AS x FROM admins WHERE user_id=?").bind(String(user.id)).first()) return true;
-  if (!claim) return false;
-  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM admins").first();
-  if (Number(count?.n || 0)) return false;
-  await env.DB.prepare("INSERT INTO admins(user_id,first_name,username) VALUES(?,?,?)")
-    .bind(String(user.id), user.first_name || "", user.username || "").run();
-  return true;
+  // Never grant admin rights to the first person who messages an empty bot.
+  // Existing admins in D1 and explicitly configured ADMIN_IDS are trusted.
+  return false;
 }
 
 async function register(env, userId, input) {
@@ -303,6 +300,17 @@ async function register(env, userId, input) {
     "چند فروشنده با این نام پیدا شد. بنویسید: ثبت نام [نام کامل] | [نام شعبه]" :
     "نام پیدا نشد؛ نام و فروشگاه را مطابق گزارش فروش وارد کنید.";
   const person = matches[0];
+  // Avoid allowing a second Bale account to claim an already-linked seller.
+  const registered = await env.DB.prepare("SELECT user_id FROM azar_links WHERE seller_key=? LIMIT 1")
+    .bind(person.seller_key).first();
+  if (registered && String(registered.user_id) !== String(userId)) {
+    return "این فروشنده قبلاً به یک حساب بله متصل شده است. برای اصلاح حساب با مدیر طرح هماهنگ کنید.";
+  }
+  const previousOwner = await env.DB.prepare("SELECT user_id FROM aban_links WHERE seller_key=? LIMIT 1")
+    .bind(person.seller_key).first();
+  if (previousOwner && String(previousOwner.user_id) !== String(userId)) {
+    return "این فروشنده قبلاً در طرح آبان ثبت شده است. برای اصلاح حساب با مدیر طرح هماهنگ کنید.";
+  }
   await env.DB.prepare("INSERT OR REPLACE INTO azar_links(user_id,seller_key) VALUES(?,?)")
     .bind(String(userId), person.seller_key).run();
   return sellerMessage(person);
@@ -368,7 +376,8 @@ async function hook(request, env) {
     text === "وضعیت من" || text === "ثبت نام" || text === "ثبت‌نام" ||
     /^ثبت[ ‌-]?نام\s+/u.test(text) || text === "تیم من" ||
     text === "وضعیت شعبه" || text.startsWith("وضعیت شعبه ") ||
-    text === "شبکه" || text === "برندگان" || text === "برندگان آذر";
+    text === "شبکه" || text === "برندگان" || text === "برندگان آذر" ||
+    text === "آخرین گزارش" || text === "پردازش فوری";
   if (privateCommands && message.chat?.type !== "private") {
     await send(env, chat, "🔒 برای حفظ محرمانگی اطلاعات، این دستور را در گفت‌وگوی خصوصی ربات ارسال کنید.");
     return new Response("OK");
