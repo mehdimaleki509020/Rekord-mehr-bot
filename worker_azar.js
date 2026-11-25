@@ -366,7 +366,7 @@ async function hook(request, env) {
   // Personal sales, registration and management details are private only.
   const privateCommands = text === "/start" || text === "شروع" ||
     text === "وضعیت من" || text === "ثبت نام" || text === "ثبت‌نام" ||
-    /^ثبت[ ‌-]?نام\\s+/u.test(text) || text === "تیم من" ||
+    /^ثبت[ ‌-]?نام\s+/u.test(text) || text === "تیم من" ||
     text === "وضعیت شعبه" || text.startsWith("وضعیت شعبه ") ||
     text === "شبکه" || text === "برندگان" || text === "برندگان آذر";
   if (privateCommands && message.chat?.type !== "private") {
