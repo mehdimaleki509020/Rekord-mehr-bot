@@ -45,24 +45,30 @@ def request(path,method="POST",data=None,lease=None,raw=False):
 
 def process(job):
     job_id=int(job["id"]);lease=job["lease"];root="jobs/"+str(job_id)+"/"
+    stage="metadata"
     try:
         filename=Path(job["file_name"])
         suffix=filename.suffix.lower()
         if suffix not in (".xlsb",".xlsx",".csv"):raise ReportError("unsupported_layout")
         if not 0<int(job["file_size"])<=MAX_FILE:raise ReportError("too_large")
+        stage="download"
         raw=request(root+"file","GET",lease=lease,raw=True)
         digest=hashlib.sha256(raw).hexdigest()
         with tempfile.TemporaryDirectory(prefix="coach-ops-") as directory:
             path=Path(directory)/("report"+suffix)
             path.write_bytes(raw)
             del raw
+            stage="parse"
             kind,rows=parse(path)
+        stage="begin"
         meta=request(root+"begin",data={"kind":kind,"hash":digest,"count":len(rows)},lease=lease)
         if meta.get("duplicate"):
             print("Duplicate report skipped")
             return
+        stage="batch"
         for i in range(0,len(rows),80):
             request(root+"batch",data={"rows":rows[i:i+80]},lease=lease)
+        stage="finish"
         done=request(root+"finish",data={},lease=lease)
         print("Validated operational report")
     except Exception as exc:
@@ -71,7 +77,9 @@ def process(job):
         elif isinstance(exc,(ValueError,UnicodeError)):reason="parse_error"
         else:reason="processor_error"
         # Never log exception strings, file contents, names, token, paths or HTTP body.
-        print("Operational report requires attention")
+        status=exc.code if isinstance(exc,urllib.error.HTTPError) else 0
+        # Fixed stage, exception class and numeric HTTP status only; no raw payload.
+        print("Operational report requires attention:",stage,type(exc).__name__,status)
         try:request(root+"fail",data={"reason":reason},lease=lease)
         except Exception:print("Could not record report failure; lease will expire")
         
