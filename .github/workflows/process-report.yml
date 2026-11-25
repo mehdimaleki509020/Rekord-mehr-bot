@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - processor_aban.py
+      - processor_azar.py
       - .github/workflows/process-report.yml
   schedule:
     # Avoid the crowded exact hour boundary; GitHub can delay scheduled jobs.
@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python processor_aban.py SalesReport.xlsb --output result.json
+          python processor_azar.py SalesReport.xlsb --output result.json
           test -s result.json
 
       - name: Save processed result
