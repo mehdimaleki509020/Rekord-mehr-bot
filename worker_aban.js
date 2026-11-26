@@ -1,4 +1,5 @@
 import { sellerTarget, sellerBonus, supervisorBonus } from "./aban_rules.js";
+import { coachMessage, coachPreviewSmoke } from "./coach_hooshi.js";
 
 const REPO = "mehdimaleki509020/Rekord-mehr-bot";
 const AUD = "rekord-mehr-bot-processor";
@@ -370,6 +371,14 @@ async function hook(request, env) {
   const sup = await supervisorOf(env, user.id);
   const isAdmin = await admin(env, user);
 
+  if (text === "مربی من" || text === "پاکسازی مربی" || text.startsWith("مربی ")) {
+    if (env.COACH_ENABLED !== "true") {
+      await send(env, chat, "مربی هوشمند هنوز در مرحله آزمایش است.");
+    } else {
+      await send(env, chat, await coachMessage(env, message, mine));
+    }
+    return new Response("OK");
+  }
   if (text === "/start" || text === "شروع" || text === "وضعیت من") {
     if (sup) await send(env, chat, await branchStatus(env, sup.store));
     else if (isAdmin) await send(env, chat, [
@@ -486,6 +495,37 @@ async function authorize(request) {
       { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     return await crypto.subtle.verify({ name: "RSASSA-PKCS1-v1_5" },
       cryptoKey, decode64(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]));
+  } catch { return false; }
+}
+
+// Dedicated GitHub Actions OIDC authentication for preview-only AI smoke tests.
+// Distinct audience and PR/workflow claims prevent reuse of production processor tokens.
+async function authorizeCoachCI(request) {
+  const bearer = request.headers.get("authorization") || "";
+  if (!bearer.startsWith("Bearer ")) return false;
+  const parts = bearer.slice(7).split(".");
+  if (parts.length !== 3) return false;
+  let header, claims;
+  try { header = decode(parts[0]); claims = decode(parts[1]); } catch { return false; }
+  const now = Math.floor(Date.now() / 1000);
+  const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (header.alg !== "RS256" || claims.iss !== ISS ||
+      !audiences.includes("rekord-mehr-bot-coach-preview") ||
+      claims.repository !== REPO ||
+      String(claims.repository_id) !== "1381436999" ||
+      String(claims.actor_id) !== "332474987" ||
+      claims.event_name !== "pull_request" ||
+      claims.ref !== "refs/pull/3/merge" ||
+      claims.workflow_ref !== REPO + "/.github/workflows/coach-check.yml@refs/pull/3/merge" ||
+      !claims.exp || claims.exp < now || (claims.nbf && claims.nbf > now) ||
+      (claims.iat && claims.iat > now + 60)) return false;
+  const jwk = (await signingKeys()).find(value => value.kid === header.kid);
+  if (!jwk) return false;
+  try {
+    const key = await crypto.subtle.importKey("jwk", jwk,
+      {name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"}, false, ["verify"]);
+    return await crypto.subtle.verify({name:"RSASSA-PKCS1-v1_5"},
+      key, decode64(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]));
   } catch { return false; }
 }
 
@@ -651,6 +691,44 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      // Preview-only diagnostics: expose configuration state, never secret values.
+      if (url.pathname === "/coach-test" || url.pathname === "/coach-preview-ready" || url.pathname === "/coach-preview-test" || url.pathname === "/coach-ci-smoke") {
+        if (env.COACH_PILOT_PREVIEW !== "yes") return json({ ok: false, error: "not_found" }, 404);
+
+        if (request.method === "GET" && url.pathname === "/coach-preview-ready") {
+          return json({
+            ok: true,
+            preview: true,
+            coach_enabled: env.COACH_ENABLED === "true",
+            hooshi_key_present: Boolean(env.HOOSHI_API_KEY),
+            test_token_present: Boolean(env.COACH_TEST_TOKEN)
+          });
+        }
+
+        if (request.method === "GET" && url.pathname === "/coach-test") {
+          const html = `<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>آزمایش مربی هوشی</title><style>body{font:16px Tahoma,Arial,sans-serif;max-width:640px;margin:36px auto;padding:16px;line-height:2;color:#202124}input,button{font:inherit;padding:12px;border-radius:8px}input{width:90%;border:1px solid #aaa}button{margin-top:12px;cursor:pointer;background:#0656b1;color:white;border:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f4;padding:16px;border-radius:8px}small{color:#555}</style><h2>آزمایش مربی هوشی — فقط Preview</h2><p>این صفحه به ربات اصلی بله متصل نیست و فقط فروشنده فرضی را آزمایش می‌کند.</p><p id="ready">در حال بررسی تنظیمات...</p><label for="secret">رمز مستقل COACH_TEST_TOKEN</label><input id="secret" type="password" autocomplete="off" spellcheck="false"><button id="run" disabled>دریافت پاسخ آزمایشی هوشی</button><pre id="out" aria-live="polite">هنوز آزمایش اجرا نشده است.</pre><small>رمز در صفحه یا حافظه مرورگر ذخیره نمی‌شود. کلید API هوشی را اینجا وارد نکنید.</small><script>const ready=document.getElementById("ready"),btn=document.getElementById("run"),out=document.getElementById("out");(async()=>{try{const r=await fetch("/coach-preview-ready",{cache:"no-store"}),j=await r.json();const parts=[["مربی فعال",j.coach_enabled],["کلید هوشی ثبت شده",j.hooshi_key_present],["رمز تست ثبت شده",j.test_token_present]];ready.textContent=parts.map(x=>(x[1]?"✅ ":"❌ ")+x[0]).join(" | ");btn.disabled=!parts.every(x=>x[1])}catch(e){ready.textContent="خطا در بررسی تنظیمات"}})();btn.onclick=async()=>{const inp=document.getElementById("secret"),secret=inp.value;inp.value="";if(!secret){out.textContent="رمز تست را وارد کنید.";return}btn.disabled=true;out.textContent="در حال دریافت پاسخ از هوشی...";try{const r=await fetch("/coach-preview-test",{method:"POST",headers:{"x-coach-test-token":secret}});const j=await r.json();const reasons={invalid_test_token:"رمز تست صحیح نیست.",test_token_missing:"رمز تست در Preview موجود نیست.",hooshi_key_missing:"کلید هوشی در Preview موجود نیست.",coach_disabled:"مربی در Preview غیرفعال است.",timeout:"زمان پاسخ هوشی بیش از حد طولانی شد.",provider_network_error:"ارتباط Cloudflare با هوشی برقرار نشد.",empty_provider_response:"هوشی پاسخ متنی نداد."};out.textContent=j.ok?j.answer:("خطا: "+(reasons[j.error]||j.error||r.status))}catch(e){out.textContent="خطای ارتباط با سرور آزمایشی."}finally{btn.disabled=false}}</script></html>`;
+          return new Response(html,{headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff","content-security-policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"}});
+        }
+
+        // CI endpoint validates signed GitHub OIDC claims; no shared secret in Actions.
+        if (url.pathname === "/coach-ci-smoke") {
+          if (request.method !== "POST") return json({ok:false,error:"method_not_allowed"},405);
+          if (!(await authorizeCoachCI(request))) return json({ok:false,error:"unauthorized"},401);
+          if (env.COACH_ENABLED !== "true") return json({ok:false,error:"coach_disabled"},503);
+          if (!env.HOOSHI_API_KEY) return json({ok:false,error:"hooshi_key_missing"},503);
+          const result = await coachPreviewSmoke(env);
+          return json(result,result.ok?200:502);
+        }
+        if (url.pathname === "/coach-preview-test") {
+          if (request.method !== "POST") return json({ ok:false, error:"method_not_allowed" },405);
+          if (env.COACH_ENABLED !== "true") return json({ok:false,error:"coach_disabled"},503);
+          if (!env.COACH_TEST_TOKEN) return json({ok:false,error:"test_token_missing"},503);
+          if (request.headers.get("x-coach-test-token") !== env.COACH_TEST_TOKEN) return json({ok:false,error:"invalid_test_token"},401);
+          if (!env.HOOSHI_API_KEY) return json({ok:false,error:"hooshi_key_missing"},503);
+          const result = await coachPreviewSmoke(env);
+          return json(result,result.ok?200:502);
+        }
+      }
       await init(env);
       if (url.pathname.startsWith("/processor/")) return processor(request, env, url);
       if (request.method === "GET" && url.pathname === "/") {

@@ -9,5 +9,17 @@
       "database_name": "rekord-mehr-db",
       "database_id": "f646ef14-b5c5-4c00-9e91-2fe0ceb85de0"
     }
-  ]
+  ],
+  "previews": {
+    "vars": {
+      "COACH_ENABLED": "true",
+      "COACH_PILOT_PREVIEW": "yes"
+    },
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_id": "129c5f45-a302-4bd3-97c0-8159b500ddc1"
+      }
+    ]
+  }
 }
